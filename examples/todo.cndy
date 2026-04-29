@@ -3,8 +3,8 @@
 // Demonstrates: stateful actor, list state, derive, multiple messages,
 // events, controller with several routes, error variants.
 
-type Id        { repr: opaque, max: 64 }
-type Timestamp { repr: utc }
+type Id        opaque  { max: 64 }
+type Timestamp instant { tz: utc }
 
 type Todo {
   id:      Id

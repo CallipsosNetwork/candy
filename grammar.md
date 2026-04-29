@@ -212,23 +212,25 @@ Actors subscribe via `subscribe EventName -> action` inside their block.
 
 ## type / enum
 
-`type` declares either a **branded primitive** (with `repr` and other
-meta-fields) or a **record** (with named user fields). The body shape
-disambiguates: meta-fields like `repr`, `unit`, `currency`, `max`, `format`
-mark a primitive; user-named `field: Type` declarations mark a record.
+`type` declares either a **branded primitive** (a name plus an underlying
+primitive shape and meta-fields) or a **record** (named user fields). The
+position of the underlying primitive disambiguates: an identifier between
+the type name and the body marks a primitive; no identifier marks a record.
+
+Underlying primitives are a fixed set: `int`, `string`, `opaque`, `bool`,
+`bytes`, `instant`, `decimal`. The body holds meta-fields that pin
+semantics (`unit`, `currency`, `round`, `max`, `format`, `tz`, ...).
 
 ```candy
-type Money     { repr: int, unit: minor, currency: USD, round: nearest }
-type Timestamp { repr: utc }
-type Key       { repr: opaque, max: 128 }
-type Email     { repr: string, max: 320, format: rfc5322 }
+type Money     int     { unit: minor, currency: USD, round: nearest }
+type Timestamp instant { tz: utc }
+type Key       opaque  { max: 128 }
+type Email     string  { max: 320, format: rfc5322 }
+type Flag      bool
 
 enum Status { Pending, Confirmed, Cancelled }
 
-type LineItem {
-  slot:  SlotId
-  price: Money
-}
+type LineItem { slot: SlotId, price: Money }    // record — no underlying primitive
 ```
 
 Type composition:

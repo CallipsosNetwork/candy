@@ -3,14 +3,13 @@
 // Demonstrates: cross-actor flow, password policy, session lifecycle,
 // idempotency, time-bound entities, error variants, prose-as-spec.
 
-type Id           { repr: opaque, max: 64 }
-type Timestamp    { repr: utc }
-type Email        { repr: string, max: 320, format: rfc5322 }
-type Password     { repr: string,
-                    intent: "plaintext at rest is forbidden — only hashed forms persist" }
-type PasswordHash { repr: opaque }
-type Token        { repr: opaque, max: 256 }
-type Key          { repr: opaque, max: 128 }
+type Id           opaque  { max: 64 }
+type Timestamp    instant { tz: utc }
+type Email        string  { max: 320, format: rfc5322 }
+type Password     string  { intent: "plaintext at rest is forbidden — only hashed forms persist" }
+type PasswordHash opaque
+type Token        opaque  { max: 256 }
+type Key          opaque  { max: 128 }
 
 actor User(id: Id) {
   state {
