@@ -1,0 +1,99 @@
+// todo.cndy — a per-user todo list.
+//
+// Demonstrates: stateful actor, list state, derive, multiple messages,
+// events, controller with several routes, error variants.
+
+type Id        { repr: opaque, max: 64 }
+type Timestamp { repr: utc }
+
+type Todo {
+  id:      Id
+  text:    string
+  done:    bool
+  created: Timestamp
+}
+
+actor TodoList(owner: Id) {
+  state {
+    items: [Todo] = []
+  }
+
+  derive open      = items where item.done == false
+  derive completed = items where item.done == true
+
+  invariant "every item.id is unique within items"
+
+  accepts Add(text: string, now: Timestamp) -> Result<Todo, EmptyText> {
+    intent: "Append a new todo to the list."
+    require: length(text) > 0  rescue reject EmptyText
+    step todo = Todo { id: generate(), text, done: false, created: now }
+    effect: items = items + todo
+    emit TodoAdded { owner, todo }
+    commit todo
+  }
+
+  accepts Toggle(id: Id) -> Result<Todo, NotFound> {
+    intent: "Flip a todo's done flag."
+    require: id in items.id  rescue reject NotFound
+    effect: items[id].done = not items[id].done
+    emit TodoToggled { owner, id, done: items[id].done }
+    commit items[id]
+  }
+
+  accepts Remove(id: Id) -> Result<Id, NotFound> {
+    intent: "Delete a todo by id."
+    require: id in items.id  rescue reject NotFound
+    effect: items = items where item.id != id
+    emit TodoRemoved { owner, id }
+    commit id
+  }
+
+  accepts Clear() -> int {
+    intent: "Remove all completed todos. Return how many were removed."
+    step count = length(completed)
+    effect: items = open
+    emit TodoCleared { owner, count }
+    commit count
+  }
+}
+
+event TodoAdded   { payload: { owner: Id, todo: Todo },         delivery: eager }
+event TodoToggled { payload: { owner: Id, id: Id, done: bool }, delivery: eager }
+event TodoRemoved { payload: { owner: Id, id: Id },             delivery: eager }
+event TodoCleared { payload: { owner: Id, count: int },         delivery: eager }
+
+controller Todos {
+  GET /todos -> TodoList(self).items {
+    auth: bearer
+    map:
+      ok(list) -> 200 { todos: list }
+  }
+
+  POST /todos -> TodoList(self).Add(text, now) {
+    auth: bearer
+    body: { text: string }
+    map:
+      ok(todo)       -> 201 todo
+      err(EmptyText) -> 422 { error: "empty_text" }
+  }
+
+  POST /todos/:id/toggle -> TodoList(self).Toggle(id) {
+    auth: bearer
+    map:
+      ok(todo)      -> 200 todo
+      err(NotFound) -> 404 { error: "not_found" }
+  }
+
+  DELETE /todos/:id -> TodoList(self).Remove(id) {
+    auth: bearer
+    map:
+      ok(_)         -> 204
+      err(NotFound) -> 404 { error: "not_found" }
+  }
+
+  POST /todos/clear -> TodoList(self).Clear() {
+    auth: bearer
+    map:
+      ok(count) -> 200 { cleared: count }
+  }
+}

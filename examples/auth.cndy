@@ -1,0 +1,168 @@
+// auth.cndy — signup and login.
+//
+// Demonstrates: cross-actor flow, password policy, session lifecycle,
+// idempotency, time-bound entities, error variants, prose-as-spec.
+
+type Id           { repr: opaque, max: 64 }
+type Timestamp    { repr: utc }
+type Email        { repr: string, max: 320, format: rfc5322 }
+type Password     { repr: string,
+                    intent: "plaintext at rest is forbidden — only hashed forms persist" }
+type PasswordHash { repr: opaque }
+type Token        { repr: opaque, max: 256 }
+type Key          { repr: opaque, max: 128 }
+
+actor User(id: Id) {
+  state {
+    email:    Email
+    hash:     PasswordHash
+    created:  Timestamp
+    verified: bool = false
+  }
+
+  invariant "email is unique across all User instances"
+
+  accepts Verify() -> Result<unit, AlreadyVerified> {
+    intent: "Mark the user's email as verified."
+    require: verified == false  rescue reject AlreadyVerified
+    effect: verified = true
+    emit UserVerified { user: self.id, at: now }
+    commit
+  }
+}
+
+actor Session(token: Token) {
+  state {
+    user:    Id
+    issued:  Timestamp
+    expires: Timestamp
+    revoked: bool = false
+  }
+
+  invariant "expires > issued"
+
+  accepts Validate(now: Timestamp) -> Result<Id, SessionInvalid> {
+    intent: "Return the user id if the session is live, else reject."
+    require: revoked == false  rescue reject SessionInvalid
+    require: now < expires     rescue reject SessionInvalid
+    commit user
+  }
+
+  accepts Revoke() -> unit {
+    intent: "Mark the session as revoked. Idempotent — re-revoking is a no-op."
+    effect: revoked = true
+    emit SessionRevoked { token: self.token, user, at: now }
+    commit
+  }
+}
+
+policy PasswordStrength {
+  intent: """
+    A password is acceptable when:
+      - length >= 12
+      - contains at least one letter and one digit
+      - is not in the common-password blocklist
+
+    Hashing uses argon2id with parameters from deployment secrets.
+    Plaintext passwords never persist; only PasswordHash is stored.
+  """
+  examples:
+    - given: "correct horse battery staple 9"
+      then:  ok
+    - given: "short1"
+      then:  err(TooShort)
+    - given: "alllowercase"
+      then:  err(MissingDigit)
+    - given: "password123"
+      then:  err(InBlocklist)
+}
+
+flow Signup(email: Email, password: Password, now: Timestamp, key: Key)
+  -> Result<{ user: Id, token: Token }, WeakPassword | EmailTaken>
+{
+  intent: """
+    Create a new user, hash the password, and issue an initial session.
+    Idempotent on key — replaying with the same key returns the same user
+    and a fresh session.
+  """
+
+  step strength = PasswordStrength(password)
+                  rescue reject WeakPassword(reason)
+
+  step taken    = if any u in User where u.email == email
+                  then reject EmailTaken
+
+  step user     = ask User.create({
+                    id:      generate(),
+                    email,
+                    hash:    hash(password),
+                    created: now,
+                  })
+
+  step session  = ask Session.create({
+                    token:   generate(),
+                    user:    user.id,
+                    issued:  now,
+                    expires: now after 7d,
+                  })
+
+  emit UserSignedUp { user: user.id, email, at: now }
+  commit { user: user.id, token: session.token }
+}
+
+flow Login(email: Email, password: Password, now: Timestamp)
+  -> Result<{ user: Id, token: Token }, InvalidCredentials>
+{
+  intent: """
+    Authenticate by email and password. On success, issue a new session.
+    Errors are opaque — never reveal which of email or password was wrong.
+  """
+
+  step user    = ask User.findBy(email)  rescue reject InvalidCredentials
+  step ok      = if not verify(password, user.hash) then reject InvalidCredentials
+  step session = ask Session.create({
+                   token:   generate(),
+                   user:    user.id,
+                   issued:  now,
+                   expires: now after 7d,
+                 })
+
+  emit UserLoggedIn { user: user.id, at: now }
+  commit { user: user.id, token: session.token }
+}
+
+flow Logout(token: Token, now: Timestamp) -> unit {
+  intent: "Revoke the session associated with the given bearer token."
+  step _ = ask Session(token).Revoke()
+  commit
+}
+
+event UserSignedUp   { payload: { user: Id, email: Email, at: Timestamp }, delivery: eager }
+event UserLoggedIn   { payload: { user: Id, at: Timestamp },               delivery: eager, order: by user }
+event UserVerified   { payload: { user: Id, at: Timestamp },               delivery: eager }
+event SessionRevoked { payload: { token: Token, user: Id, at: Timestamp }, delivery: eager }
+
+controller Auth {
+  POST /signup -> Signup(email, password, now, idempotency_key) {
+    auth: none
+    body: { email: Email, password: Password, idempotency_key: Key }
+    map:
+      ok(r)                    -> 201 { user_id: r.user, token: r.token }
+      err(WeakPassword reason) -> 422 { error: "weak_password", reason }
+      err(EmailTaken)          -> 409 { error: "email_taken" }
+  }
+
+  POST /login -> Login(email, password, now) {
+    auth: none
+    body: { email: Email, password: Password }
+    map:
+      ok(r)                   -> 200 { user_id: r.user, token: r.token }
+      err(InvalidCredentials) -> 401 { error: "invalid_credentials" }
+  }
+
+  POST /logout -> Logout(bearer, now) {
+    auth: bearer
+    map:
+      ok(_) -> 204
+  }
+}

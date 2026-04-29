@@ -1,0 +1,16 @@
+// hello.cndy — the smallest candy program.
+//
+// Demonstrates: flow, intent, controller, route mapping, response shape.
+
+flow Hello(name: string) -> string {
+  intent: "Greet someone by name."
+  commit "Hello, ${name}!"
+}
+
+controller Greetings {
+  GET /hello/:name -> Hello(name) {
+    auth: none
+    map:
+      ok(message) -> 200 { greeting: message }
+  }
+}
