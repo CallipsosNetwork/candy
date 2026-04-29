@@ -1,0 +1,29 @@
+// preferences.cndy — per-target library and idiom preferences for earbnb.
+// AI codegen consumes these as hints, not requirements.
+
+target go {
+  when need db   use sqlc
+  when need id   use ksuid
+  when need hash use argon2
+}
+
+target rust {
+  when need db   use sqlx
+  when need id   use uuid-v7
+  when need hash use argon2
+}
+
+target typescript {
+  notes: "ESM only; tagged unions over class hierarchies"
+  when need queue use bullmq
+  when need id    use cuid2
+  when need db    use drizzle
+  when need hash  use argon2
+}
+
+target python {
+  when need queue use celery
+  when need id    use ulid
+  when need db    use sqlalchemy
+  when need hash  use argon2-cffi
+}
