@@ -6,7 +6,7 @@ that expose flows over HTTP**, **policies that capture rules**, and **events
 that propagate**. From one spec, AI generates idiomatic backends in Go, Rust,
 TypeScript, or Python.
 
-The language is small (~45 single-word keywords), prose-heavy where prose
+The language is small (~48 single-word keywords), prose-heavy where prose
 serves it, rigorous where ambiguity costs.
 
 Files use the `.cndy` extension.
@@ -33,10 +33,10 @@ Every keyword belongs to one of five families:
 
 | Axis        | What it expresses                          | Examples                              |
 |-------------|--------------------------------------------|---------------------------------------|
-| `ENTITY`    | things that exist                          | `actor`, `flow`, `controller`, `event`, `policy`, `type`, `enum` |
-| `ACTION`    | things that happen                         | `ask`, `tell`, `emit`, `effect`, `commit`, `compensate`, `reject` |
+| `ENTITY`    | things that exist                          | `actor`, `flow`, `controller`, `event`, `policy`, `type`, `enum`, `target` |
+| `ACTION`    | things that happen                         | `ask`, `tell`, `emit`, `effect`, `commit`, `compensate`, `reject`, `use` |
 | `TIME`      | when, in what order, for how long          | `now`, `then`, `after`, `before`, `until`, `expire` |
-| `CONDITION` | under what circumstances                   | `if`, `else`, `when`, `require`, `invariant`, `unless` |
+| `CONDITION` | under what circumstances                   | `if`, `else`, `when`, `require`, `invariant`, `unless`, `need` |
 | `INTENT`    | why this exists, what good looks like      | `intent`, `examples`, `because`       |
 
 See `grammar.md` for the full reference.
