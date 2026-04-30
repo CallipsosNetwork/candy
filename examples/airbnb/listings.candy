@@ -1,0 +1,330 @@
+// listings.candy — property listings and calendar hold-set.
+prose {
+  intent: """
+    Listings owns the Listing and Calendar actors. A Listing is a host's
+    property record — title, location, pricing, guest cap, and lifecycle
+    status (Draft → Listed → Hidden). A Calendar is the day-by-day held-set
+    for a listing; it tracks which dates are reserved by which booking so
+    the booking saga can atomically hold and release date ranges without
+    double-booking.
+
+    The booking feature depends on this feature exclusively through two
+    exported flows: HoldDates and ReleaseDates. Both are idempotent on key.
+    All other flows are host-facing CRUD. ListListings is public and supports
+    availability filtering so guests can search open date ranges.
+  """
+
+  exports:
+    actor Listing, Calendar
+    flow  CreateListing, UpdateListing, ListListings, HoldDates, ReleaseDates
+    event ListingCreated, ListingUpdated, ListingHidden
+
+  uses:
+    feature auth for event UserSignedUp
+
+  policies: [BearerAuth]
+}
+
+enum ListingFilter { All, Listed, ByHost, AvailableInRange }
+
+type HeldEntry {
+  date:    Date
+  booking: Id
+}
+
+actor Listing(id: Id) {
+  state {
+    host:          Id
+    title:         string
+    description:   string
+    location:      string
+    pricePerNight: Money
+    maxGuests:     int
+    status:        ListingStatus = Draft
+    created:       Timestamp
+    updated:       Timestamp
+  }
+
+  invariant pricePerNight > 0
+  invariant maxGuests >= 1
+  invariant maxGuests <= 16
+  invariant "title max 200 characters"
+  invariant "description max 5000 characters"
+  invariant "location max 200 characters"
+
+  derive listed = status == Listed
+
+  accepts UpdateMeta(
+    title:         string?,
+    description:   string?,
+    location:      string?,
+    pricePerNight: Money?,
+    maxGuests:     int?,
+    now:           Timestamp,
+  ) -> Result<unit, InvalidUpdate> {
+    intent: "Apply any supplied optional fields and advance the updated timestamp."
+    effect: title         = title         if title         else self.title
+    effect: description   = description   if description   else self.description
+    effect: location      = location      if location      else self.location
+    effect: pricePerNight = pricePerNight if pricePerNight else self.pricePerNight
+    effect: maxGuests     = maxGuests     if maxGuests     else self.maxGuests
+    effect: updated       = now
+    emit ListingUpdated { listing: self.id, at: now }
+    commit
+  }
+
+  accepts Publish(now: Timestamp) -> Result<unit, AlreadyListed | DraftIncomplete> {
+    intent: "Transition a Draft listing to Listed. Requires title, description, and pricePerNight."
+    require: status != Listed                               rescue reject AlreadyListed
+    require: length(title) > 0                             rescue reject DraftIncomplete
+    require: length(description) > 0                       rescue reject DraftIncomplete
+    require: pricePerNight > 0                             rescue reject DraftIncomplete
+    effect:  status  = Listed
+    effect:  updated = now
+    commit
+  }
+
+  accepts Hide(now: Timestamp) -> Result<unit, AlreadyHidden> {
+    intent: "Transition a Listed or Draft listing to Hidden. Emits ListingHidden."
+    require: status != Hidden  rescue reject AlreadyHidden
+    effect:  status  = Hidden
+    effect:  updated = now
+    emit ListingHidden { listing: self.id, at: now }
+    commit
+  }
+}
+
+actor Calendar(listing: Id) {
+  state {
+    held: [HeldEntry]
+  }
+
+  invariant "held is unique by (date, booking) — no duplicate (date, booking) pairs"
+
+  derive heldDates = held.date
+
+  accepts Hold(
+    dates:   DateRange,
+    booking: Id,
+    key:     Key,
+  ) -> Result<unit, DatesUnavailable> {
+    intent: """
+      Reserve every date in the range for the given booking. Rejects
+      DatesUnavailable if any date in the range is already held by a
+      different booking. Idempotent on key: replaying with the same key
+      returns ok without re-appending.
+    """
+    require: not any entry in held
+             where entry.date in dates and entry.booking != booking
+             rescue reject DatesUnavailable
+    effect: held = held + [{ date: d, booking } for d in dates
+                            where not any e in held where e.date == d and e.booking == booking]
+    commit
+  }
+
+  accepts Release(
+    dates:   DateRange,
+    booking: Id,
+    key:     Key,
+  ) -> unit {
+    intent: """
+      Remove all (date, booking) entries matching the given booking in the
+      given range. Idempotent — releasing already-released dates is a no-op.
+    """
+    effect: held = held where not (held.date in dates and held.booking == booking)
+    commit
+  }
+}
+
+policy ListingOwner {
+  intent: """
+    The authenticated caller must be the listing's host. Admin users bypass
+    this check. Guests and other hosts are rejected with NotOwner.
+  """
+  examples:
+    - given: caller is host of listing
+      then:  ok
+    - given: caller is a different host
+      then:  err(NotOwner)
+    - given: caller has role Admin
+      then:  ok
+    - given: caller has role Guest
+      then:  err(NotOwner)
+}
+
+flow CreateListing(
+  host:          Id,
+  title:         string,
+  description:   string,
+  location:      string,
+  pricePerNight: Money,
+  maxGuests:     int,
+  now:           Timestamp,
+  key:           Key,
+) -> Result<{ listing: Id }, InvalidListing> {
+  intent: "Create a new Listing in Draft status for the given host."
+
+  step listing = ask Listing.create({
+    id:            generate(),
+    host,
+    title,
+    description,
+    location,
+    pricePerNight,
+    maxGuests,
+    status:        Draft,
+    created:       now,
+    updated:       now,
+  })
+                 rescue reject InvalidListing
+
+  emit ListingCreated { listing: listing.id, host, at: now }
+  commit { listing: listing.id }
+}
+
+flow UpdateListing(
+  listing:       Id,
+  title:         string?,
+  description:   string?,
+  location:      string?,
+  pricePerNight: Money?,
+  maxGuests:     int?,
+  now:           Timestamp,
+  key:           Key,
+) -> Result<unit, InvalidUpdate | ListingNotFound> {
+  intent: "Apply a partial update to an existing listing's metadata."
+
+  step l = ask Listing.findBy(id: listing)  rescue reject ListingNotFound
+  step _ = ask Listing(listing).UpdateMeta(title, description, location, pricePerNight, maxGuests, now)
+               rescue reject InvalidUpdate
+  commit
+}
+
+flow PublishListing(listing: Id, now: Timestamp, key: Key)
+  -> Result<unit, AlreadyListed | DraftIncomplete | ListingNotFound>
+{
+  intent: "Move a Draft listing to Listed, making it visible to guests."
+  step l = ask Listing.findBy(id: listing)  rescue reject ListingNotFound
+  step _ = ask Listing(listing).Publish(now)
+               rescue reject AlreadyListed | DraftIncomplete
+  commit
+}
+
+flow HideListing(listing: Id, now: Timestamp, key: Key)
+  -> Result<unit, AlreadyHidden | ListingNotFound>
+{
+  intent: "Move a Listed or Draft listing to Hidden, removing it from search."
+  step l = ask Listing.findBy(id: listing)  rescue reject ListingNotFound
+  step _ = ask Listing(listing).Hide(now)
+               rescue reject AlreadyHidden
+  commit
+}
+
+flow ListListings(
+  filter: ListingFilter,
+  host:   Id?,
+  dates:  DateRange?,
+) -> [Listing] {
+  intent: """
+    Query listings by filter. Listed is the default. ByHost returns all
+    listings for the given host regardless of status. AvailableInRange
+    returns Listed listings whose Calendar.heldDates do not overlap the
+    input dates — used by the guest search surface.
+  """
+
+  step results =
+    if filter == All            then any l in Listing
+    else if filter == Listed    then any l in Listing where l.status == Listed
+    else if filter == ByHost    then any l in Listing where l.host == host
+    else if filter == AvailableInRange
+      then any l in Listing
+           where l.status == Listed
+             and not any d in Calendar(l.id).heldDates where d in dates
+
+  commit results
+}
+
+flow HoldDates(listing: Id, dates: DateRange, booking: Id, key: Key)
+  -> Result<unit, DatesUnavailable | ListingNotFound | ListingNotListed>
+{
+  intent: "Booking saga entry point. Verify listing exists and is Listed, then hold dates. Idempotent on key."
+  step l = ask Listing.findBy(id: listing)   rescue reject ListingNotFound
+  step _ = if l.status != Listed             then reject ListingNotListed
+  step _ = ask Calendar(listing).Hold(dates, booking, key)
+               rescue reject DatesUnavailable
+  commit
+}
+
+flow ReleaseDates(listing: Id, dates: DateRange, booking: Id, key: Key) -> unit {
+  intent: "Booking saga compensation. Unconditionally releases held entries for (dates, booking). Idempotent."
+  step _ = ask Calendar(listing).Release(dates, booking, key)
+  commit
+}
+
+controller Listings {
+  POST /listings -> CreateListing(self, body.title, body.description, body.location, body.pricePerNight, body.maxGuests, now, idempotency_key) {
+    auth: bearer
+    policies: [RoleGated(Host)]
+    body: {
+      title:           string,
+      description:     string,
+      location:        string,
+      pricePerNight:   Money,
+      maxGuests:       int,
+      idempotency_key: Key,
+    }
+    map:
+      ok(result)                    -> 201 { listing_id: result.listing }
+      err(InvalidListing reason)    -> 422 { error: "invalid_listing", reason }
+  }
+
+  PATCH /listings/:id -> UpdateListing(id, body.title, body.description, body.location, body.pricePerNight, body.maxGuests, now, idempotency_key) {
+    auth: bearer
+    policies: [RoleGated(Host), ListingOwner]
+    body: {
+      title?:          string,
+      description?:    string,
+      location?:       string,
+      pricePerNight?:  Money,
+      maxGuests?:      int,
+      idempotency_key: Key,
+    }
+    map:
+      ok(_)                         -> 200
+      err(InvalidUpdate reason)     -> 422 { error: "invalid_update", reason }
+      err(ListingNotFound)          -> 404 { error: "listing_not_found" }
+  }
+
+  POST /listings/:id/publish -> PublishListing(id, now, idempotency_key) {
+    auth: bearer
+    policies: [RoleGated(Host), ListingOwner]
+    body: { idempotency_key: Key }
+    map:
+      ok(_)                         -> 200
+      err(AlreadyListed)            -> 409 { error: "already_listed" }
+      err(DraftIncomplete reason)   -> 422 { error: "draft_incomplete", reason }
+      err(ListingNotFound)          -> 404 { error: "listing_not_found" }
+  }
+
+  POST /listings/:id/hide -> HideListing(id, now, idempotency_key) {
+    auth: bearer
+    policies: [RoleGated(Host), ListingOwner]
+    body: { idempotency_key: Key }
+    map:
+      ok(_)                         -> 200
+      err(AlreadyHidden)            -> 409 { error: "already_hidden" }
+      err(ListingNotFound)          -> 404 { error: "listing_not_found" }
+  }
+
+  GET /listings -> ListListings(query.filter, query.host, query.dates) {
+    auth: none
+    query: {
+      filter: ListingFilter = Listed,
+      host:   Id?,
+      from:   Date?,
+      to:     Date?,
+    }
+    map:
+      ok(list) -> 200 { listings: list }
+  }
+}
