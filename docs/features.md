@@ -174,7 +174,7 @@ a parser resolves forward references without preprocessing.
 
 ## Examples in this repo
 
-- `examples/auth.candy` — single-file feature (tutorial scale; no `prose`
+- `examples/auth/auth.candy` — single-file feature (tutorial scale; no `prose`
   block since the example predates this design — the airbnb auth feature
   shows the production form).
 - `examples/airbnb/auth.candy` — single-file production feature with

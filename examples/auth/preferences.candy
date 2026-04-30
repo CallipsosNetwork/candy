@@ -1,0 +1,27 @@
+// preferences.candy — per-target library and idiom preferences for auth.
+// AI codegen consumes these as hints, not requirements.
+
+target go {
+  when need database  use sqlc
+  when need id        use ksuid
+  when need hash      use argon2
+}
+
+target rust {
+  when need database  use sqlx
+  when need id        use uuid-v7
+  when need hash      use argon2
+}
+
+target typescript {
+  notes: "ESM only; tagged unions over class hierarchies"
+  when need id        use cuid2
+  when need database  use drizzle
+  when need hash      use argon2
+}
+
+target python {
+  when need id        use ulid
+  when need database  use sqlalchemy
+  when need hash      use argon2-cffi
+}

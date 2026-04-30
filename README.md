@@ -75,7 +75,7 @@ The `examples/` directory walks the language from trivial to realistic:
 |-----------------------|------------------------------------------------------------------------------|
 | `examples/hello.candy` | The minimum: a flow, a controller, a route mapping.                          |
 | `examples/todo.candy`  | A stateful actor with list state, derived views, multiple messages, events, and a controller with several routes. |
-| `examples/auth.candy`  | Cross-actor flow (`Signup`), prose-driven `policy`, time-bound sessions, idempotency keys, and opaque errors. |
+| `examples/auth/auth.candy`  | Cross-actor flow (`Signup`), prose-driven `policy`, time-bound sessions, idempotency keys, and opaque errors. |
 
 Read them in that order. Each one introduces one or two new pieces of the
 grammar without revisiting prior ground.
