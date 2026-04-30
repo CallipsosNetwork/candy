@@ -1,14 +1,29 @@
-// wallet.candy — TODO: implement per README.md scope.
+// wallet.candy — money primitives, idempotency, and conservation invariants.
 //
-// Money primitives with idempotency, append-only journal, and
-// conservation invariants. No external SDKs — pure in-spec accounting.
+// Per-user wallets with topup, withdraw, and peer-to-peer transfer.
+// Money is integer minor units in USD; floats are forbidden. Every state
+// change appends a journal entry; balance is derived from the journal so
+// the two can never disagree. Replays are idempotent on key.
 
 prose {
   intent: """
-    A per-user wallet with topup, withdraw, and transfer flows.
-    Money is integer minor units in USD. Every state change appends
-    a journal entry; balance is derived from the journal so the two
-    cannot disagree. Replays are idempotent on key.
+    A per-user wallet supporting topup, withdraw, and peer-to-peer transfer.
+    Money is integer minor units in USD — no floats, no rounding surprises.
+    Every state change appends a JournalEntry to an append-only list; the
+    wallet balance is derived from the sum of deltas so there is only ever
+    one source of truth. Every flow accepts an idempotency key, and every
+    Credit/Debit message on the actor replays safely: the same key returns
+    the prior entry without re-applying the effect.
+
+    Transfer is a two-leg saga: debit the source, then credit the
+    destination. If the credit fails for any reason, the source debit is
+    compensated by a reversing credit so both wallets return to their
+    pre-transfer balance. TransferAtomicity captures the two-legs-or-zero
+    property in prose and examples.
+
+    This example is intentionally substrate-only — no external payment
+    SDKs, no schedules. The pedagogical point is that non-trivial financial
+    logic does not require an external SDK.
   """
 
   exports:
@@ -20,18 +35,375 @@ prose {
   policies: [TransferAtomicity]
 }
 
-// TODO: types — Id, Timestamp, Key, Money (unit: minor, currency: USD,
-//       round: nearest), JournalEntry record.
-// TODO: actor Wallet — id, owner, journal: [JournalEntry], derived
-//       balance = sum(journal.delta); invariants: balance >= 0 and
-//       balance == sum(journal.delta).
-// TODO: accepts Credit(amount, key, now), Debit(amount, key, now) on
-//       Wallet — both idempotent on key.
-// TODO: policy TransferAtomicity — flow-scope on Transfer; prose plus
-//       examples covering self-transfer, insufficient funds, replay.
-// TODO: flow Topup(wallet, amount, key, now).
-// TODO: flow Withdraw(wallet, amount, key, now).
-// TODO: flow Transfer(from, to, amount, key, now) — debits source,
-//       credits destination, compensates source on credit failure.
-// TODO: events WalletTopped, WalletWithdrawn, WalletTransferred.
-// TODO: controller Wallets with bearer-auth routes.
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type Id        opaque  { max: 64 }
+type Timestamp instant { tz: utc }
+type Key       opaque  { max: 128 }
+
+// Money is integer minor units (cents). Arithmetic is exact; no rounding
+// occurs at the type level because round: nearest applies only when the
+// codegen must bridge a fractional input (e.g. a REST body float). In
+// practice, callers always supply whole cent values.
+type Money int { unit: minor, currency: USD, round: nearest }
+
+// EntryKind tags each journal entry with the originating operation.
+// TransferIn and TransferOut are kept distinct so per-kind reporting
+// (e.g. net transfer volume) requires no secondary field.
+enum EntryKind { Topup, Withdrawal, TransferOut, TransferIn }
+
+// JournalEntry is the immutable record appended on every balance change.
+// delta is signed: positive for credits (Topup, TransferIn), negative
+// for debits (Withdrawal, TransferOut). counterpart carries the peer
+// wallet id for transfers and is absent for topup/withdrawal.
+type JournalEntry {
+  id:          Id
+  kind:        EntryKind
+  delta:       Money
+  counterpart: Id?
+  key:         Key
+  at:          Timestamp
+}
+
+// ---------------------------------------------------------------------------
+// Actor
+// ---------------------------------------------------------------------------
+
+actor Wallet(owner: Id) {
+  state {
+    journal: [JournalEntry] = []
+    created: Timestamp
+  }
+
+  // Balance is the authoritative sum of all signed deltas. It is never
+  // stored separately; codegen materialises it as a computed column or a
+  // live aggregation depending on the target.
+  derive balance = sum(journal.delta)
+
+  // Conservation invariants. The first is a safety property: no wallet
+  // may go negative. The second is tautological by construction but
+  // declares the derivation contract explicitly so codegen can emit a
+  // self-check assertion in debug builds.
+  invariant balance >= 0
+  invariant balance == sum(journal.delta)
+
+  // Idempotency invariant: no two entries in the journal share the same
+  // (key, kind) pair. Credit and Debit enforce this at write time; this
+  // invariant is the spec-level declaration that makes the property
+  // grep-able and testable.
+  invariant "all (key, kind) pairs in journal are distinct"
+
+  accepts Credit(
+    amount:      Money,
+    kind:        EntryKind,
+    counterpart: Id?,
+    key:         Key,
+    now:         Timestamp,
+  ) -> Result<JournalEntry, ReplayMismatch> {
+    intent: """
+      Append a positive journal entry. Idempotent on (key, kind): if an
+      entry with the same key and kind already exists, return it without
+      re-appending. ReplayMismatch fires if the key exists but the amount
+      or counterpart differs — that is a caller bug, not a replay.
+    """
+    step prior = journal where e.key == key and e.kind == kind
+    step _ = if length(prior) > 0 then
+               if last(prior).delta != amount or last(prior).counterpart != counterpart
+               then reject ReplayMismatch
+               else commit last(prior)
+    step entry = {
+      id:          generate(),
+      kind,
+      delta:       amount,
+      counterpart,
+      key,
+      at:          now,
+    }
+    effect: journal = journal + [entry]
+    commit entry
+  }
+
+  accepts Debit(
+    amount:      Money,
+    kind:        EntryKind,
+    counterpart: Id?,
+    key:         Key,
+    now:         Timestamp,
+  ) -> Result<JournalEntry, InsufficientFunds | ReplayMismatch> {
+    intent: """
+      Append a negative journal entry. Idempotent on (key, kind): same
+      semantics as Credit. Rejects InsufficientFunds if balance < amount
+      and no prior matching entry exists (i.e. this is a fresh attempt,
+      not a replay).
+    """
+    step prior = journal where e.key == key and e.kind == kind
+    step _ = if length(prior) > 0 then
+               if last(prior).delta != (0 - amount) or last(prior).counterpart != counterpart
+               then reject ReplayMismatch
+               else commit last(prior)
+    require: balance >= amount  rescue reject InsufficientFunds
+    step entry = {
+      id:          generate(),
+      kind,
+      delta:       0 - amount,
+      counterpart,
+      key,
+      at:          now,
+    }
+    effect: journal = journal + [entry]
+    commit entry
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Policy
+// ---------------------------------------------------------------------------
+
+policy TransferAtomicity {
+  intent: """
+    A transfer is all-or-nothing. The source debit and destination credit
+    succeed together or compensate together. There is no in-between state
+    where one wallet has been debited but the other not yet credited.
+
+    Concretely: the Transfer flow first debits the source wallet (step
+    'out'). If that succeeds, it credits the destination wallet (step
+    'in'). If the credit fails for any reason — network fault, destination
+    wallet not found, or any other error — the flow issues a compensating
+    Credit to the source wallet using a deterministic derived key
+    (key+"#compensate"). The compensating Credit uses kind TransferIn so
+    the debit and its reversal are distinguishable in the journal and
+    sum to zero net effect on the source balance.
+
+    A replay of the original key after a successful transfer returns the
+    prior pair of entries without re-applying any effects. A replay after
+    a compensated transfer returns the same compensation result without
+    re-debiting.
+
+    Self-transfer is rejected before any state change via a guard step.
+  """
+  examples:
+    - given: >
+        Transfer(from=A, to=B, amount=500, key="k1", now=T) where
+        Wallet(A).balance=1000 and Wallet(B).balance=200.
+        Both Credit and Debit succeed.
+      then: >
+        ok({ debit: JournalEntry(kind=TransferOut, delta=-500),
+             credit: JournalEntry(kind=TransferIn, delta=500) })
+        Wallet(A).balance=500, Wallet(B).balance=700.
+
+    - given: >
+        Transfer(from=A, to=B, amount=500, key="k1", now=T) where
+        Wallet(A).balance=300 (insufficient).
+      then: >
+        err(InsufficientFunds).
+        No journal entry appended to either wallet.
+
+    - given: >
+        Transfer(from=A, to=B, amount=500, key="k1", now=T).
+        Wallet(A).Debit succeeds; Wallet(B).Credit fails (wallet not found).
+        Compensation: Wallet(A).Credit(500, TransferIn, B, "k1#compensate", T).
+      then: >
+        err(WalletNotFound).
+        Wallet(A).balance is restored to pre-transfer value.
+        Wallet(B) has no entry. Net effect on both wallets is zero.
+
+    - given: >
+        Transfer(from=A, to=B, amount=500, key="k1", now=T) replayed after
+        a prior successful transfer with the same key.
+      then: >
+        ok({ debit: <prior debit entry>, credit: <prior credit entry> })
+        No new entries appended. Balances unchanged.
+
+    - given: >
+        Transfer(from=A, to=A, amount=100, key="k1", now=T) — self-transfer.
+      then: >
+        err(SelfTransfer).
+        No journal entries appended. No state change.
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+event WalletTopped {
+  payload:  { wallet: Id, amount: Money, at: Timestamp }
+  delivery: eager
+}
+
+event WalletWithdrawn {
+  payload:  { wallet: Id, amount: Money, at: Timestamp }
+  delivery: eager
+}
+
+event WalletTransferred {
+  payload:  { from: Id, to: Id, amount: Money, at: Timestamp }
+  delivery: eager
+}
+
+// ---------------------------------------------------------------------------
+// Flows
+// ---------------------------------------------------------------------------
+
+flow Topup(
+  wallet: Id,
+  amount: Money,
+  now:    Timestamp,
+  key:    Key,
+) -> Result<JournalEntry, InvalidAmount | WalletNotFound>
+{
+  intent: """
+    Credit a wallet with the given amount. Validates that amount > 0,
+    then forwards to Wallet(wallet).Credit. Idempotent on key: replaying
+    with the same key returns the prior entry without re-crediting.
+    Emits WalletTopped on first successful application.
+  """
+
+  step _ = if amount <= 0 then reject InvalidAmount
+
+  step w = ask Wallet.findBy(owner: wallet)
+           rescue reject WalletNotFound
+
+  step entry = ask Wallet(wallet).Credit(amount, Topup, none, key, now)
+               rescue reject err
+
+  emit WalletTopped { wallet, amount, at: now }
+  commit entry
+}
+
+flow Withdraw(
+  wallet: Id,
+  amount: Money,
+  now:    Timestamp,
+  key:    Key,
+) -> Result<JournalEntry, InsufficientFunds | InvalidAmount | WalletNotFound>
+{
+  intent: """
+    Debit a wallet by the given amount. Validates that amount > 0 and that
+    the wallet exists, then forwards to Wallet(wallet).Debit. The actor
+    enforces the balance >= 0 invariant and rejects InsufficientFunds when
+    balance < amount. Idempotent on key.
+  """
+
+  step _ = if amount <= 0 then reject InvalidAmount
+
+  step w = ask Wallet.findBy(owner: wallet)
+           rescue reject WalletNotFound
+
+  step entry = ask Wallet(wallet).Debit(amount, Withdrawal, none, key, now)
+               rescue reject err
+
+  emit WalletWithdrawn { wallet, amount, at: now }
+  commit entry
+}
+
+flow Transfer(
+  from:   Id,
+  to:     Id,
+  amount: Money,
+  now:    Timestamp,
+  key:    Key,
+) -> Result<{ debit: JournalEntry, credit: JournalEntry },
+            InsufficientFunds | InvalidAmount | SelfTransfer | WalletNotFound>
+{
+  intent: """
+    Move amount from wallet 'from' to wallet 'to' atomically. Guards:
+    amount > 0 and from != to. Steps: debit source, then credit
+    destination. If the credit fails, a compensating credit is applied to
+    the source using key+"#compensate" so the net effect on the source is
+    zero and the flow surfaces the original error. Governed by
+    TransferAtomicity. Idempotent on key.
+  """
+
+  policies: [TransferAtomicity]
+
+  step _ = if amount <= 0 then reject InvalidAmount
+  step _ = if from == to  then reject SelfTransfer
+
+  step src = ask Wallet.findBy(owner: from)
+             rescue reject WalletNotFound
+
+  step dst = ask Wallet.findBy(owner: to)
+             rescue reject WalletNotFound
+
+  // Leg 1: debit the source wallet. Insufficient funds rejects here
+  // before any credit is attempted.
+  step out = ask Wallet(from).Debit(amount, TransferOut, to, key, now)
+             rescue reject err
+
+  // Leg 2: credit the destination. On failure, compensate leg 1 by
+  // crediting the source with a deterministic derived key, then surface
+  // the original error. The compensation uses TransferIn kind so the
+  // reversal is visible in the journal and the (key, kind) idempotency
+  // invariant is not violated (TransferOut remains unique for 'key').
+  step in = ask Wallet(to).Credit(amount, TransferIn, from, key, now)
+            rescue ask Wallet(from).Credit(amount, TransferIn, to, "${key}#compensate", now);
+                   reject err
+
+  emit WalletTransferred { from, to, amount, at: now }
+  commit { debit: out, credit: in }
+}
+
+// ---------------------------------------------------------------------------
+// Controller
+// ---------------------------------------------------------------------------
+
+controller Wallets {
+  // All routes require bearer auth. 'self' is the authenticated wallet
+  // owner id. Cross-owner access is out of scope for this example.
+
+  GET /wallets/:id -> Wallet(id).balance {
+    auth: bearer
+    map:
+      ok(balance) -> 200 { balance }
+      err(NotFound) -> 404 { error: "wallet_not_found" }
+  }
+
+  GET /wallets/:id/journal -> Wallet(id).journal {
+    auth: bearer
+    map:
+      ok(entries) -> 200 { entries }
+      err(NotFound) -> 404 { error: "wallet_not_found" }
+  }
+
+  POST /wallets/:id/topup -> Topup(id, body.amount, now, body.idempotency_key) {
+    auth: bearer
+    body: {
+      amount:          Money,
+      idempotency_key: Key,
+    }
+    map:
+      ok(entry)          -> 201 { entry }
+      err(InvalidAmount) -> 422 { error: "invalid_amount" }
+      err(WalletNotFound) -> 404 { error: "wallet_not_found" }
+  }
+
+  POST /wallets/:id/withdraw -> Withdraw(id, body.amount, now, body.idempotency_key) {
+    auth: bearer
+    body: {
+      amount:          Money,
+      idempotency_key: Key,
+    }
+    map:
+      ok(entry)              -> 201 { entry }
+      err(InsufficientFunds) -> 409 { error: "insufficient_funds" }
+      err(InvalidAmount)     -> 422 { error: "invalid_amount" }
+      err(WalletNotFound)    -> 404 { error: "wallet_not_found" }
+  }
+
+  POST /transfers -> Transfer(self, body.to, body.amount, now, body.idempotency_key) {
+    auth: bearer
+    body: {
+      to:              Id,
+      amount:          Money,
+      idempotency_key: Key,
+    }
+    map:
+      ok(r)                  -> 201 { debit: r.debit, credit: r.credit }
+      err(InsufficientFunds) -> 409 { error: "insufficient_funds" }
+      err(InvalidAmount)     -> 422 { error: "invalid_amount" }
+      err(SelfTransfer)      -> 422 { error: "self_transfer" }
+      err(WalletNotFound)    -> 404 { error: "wallet_not_found" }
+  }
+}
