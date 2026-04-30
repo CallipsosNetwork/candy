@@ -1,0 +1,47 @@
+// notifications.candy — TODO: implement per README.md scope.
+//
+// Event-driven async pipeline: a NotificationWorker subscribes to
+// internal events (UserSignedUp, OrderShipped) and fans them out to
+// email and SMS providers. Smallest exercise of subscribe + external
+// + retry-on-failure via re-emit.
+
+prose {
+  intent: """
+    Fan-out delivery of internal events to user-facing channels.
+    A NotificationWorker actor subscribes to UserSignedUp and
+    OrderShipped, looks up the user's contact preferences, and
+    dispatches to Email and/or SMS providers. Failures re-emit a
+    delayed retry envelope; permanent failures emit
+    NotificationFailed for downstream observability.
+  """
+
+  exports:
+    actor NotificationWorker
+    flow  Send, Retry
+    event NotificationSent, NotificationFailed
+
+  uses:
+    external Email for SendEmail
+    external SMS   for SendSMS
+
+  policies: [DeliveryAtLeastOnce]
+}
+
+// TODO: types — Id, Timestamp, Key, EmailAddress, PhoneNumber,
+//       NotificationKind enum (Welcome, Shipped), Channel enum
+//       (EmailChannel, SMSChannel), DeliveryAttempt record.
+// TODO: actor NotificationWorker — subscribes to UserSignedUp,
+//       OrderShipped (declared in uses); minimal state (recent
+//       attempts, dedup keys).
+// TODO: external actor Email with providers: [SendGrid, Mailgun,
+//       Resend]; accepts SendEmail; emits EmailDelivered, EmailBounced.
+// TODO: external actor SMS with providers: [Twilio, Vonage];
+//       accepts SendSMS; emits SMSDelivered, SMSFailed.
+// TODO: flow Send(recipient, kind, channel, key, now) — picks a
+//       provider via Actor[Tag] and dispatches.
+// TODO: flow Retry(attempt, now, key) — re-emits with exponential
+//       backoff up to MaxAttempts; on terminal failure emits
+//       NotificationFailed.
+// TODO: events NotificationSent, NotificationFailed.
+// TODO: policy DeliveryAtLeastOnce — feature-scope.
+// TODO: controller Notifications (admin-only test/replay routes).
