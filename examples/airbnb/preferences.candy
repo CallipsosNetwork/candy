@@ -5,12 +5,18 @@ target go {
   when need database  use sqlc
   when need id        use ksuid
   when need hash      use argon2
+  when need stripe    use stripe-go
+  when need polar     use polar-go
+  when need lemon     use lemonsqueezy-go
 }
 
 target rust {
   when need database  use sqlx
   when need id        use uuid-v7
   when need hash      use argon2
+  when need stripe    use async-stripe
+  when need polar     use polar-rust
+  when need lemon     use lemonsqueezy-rs
 }
 
 target typescript {
@@ -19,6 +25,9 @@ target typescript {
   when need id        use cuid2
   when need database  use drizzle
   when need hash      use argon2
+  when need stripe    use stripe-node
+  when need polar     use polarsh-sdk
+  when need lemon     use lemonsqueezy-js
 }
 
 target python {
@@ -26,4 +35,7 @@ target python {
   when need id        use ulid
   when need database  use sqlalchemy
   when need hash      use argon2-cffi
+  when need stripe    use stripe-python
+  when need polar     use polar-python
+  when need lemon     use lemonsqueezy-py
 }
