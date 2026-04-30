@@ -1,0 +1,37 @@
+// preferences.candy — per-target library and idiom preferences for billing.
+// AI codegen consumes these as hints, not requirements.
+
+target go {
+  when need database  use sqlc
+  when need id        use ksuid
+  when need stripe    use stripe-go
+  when need polar     use polar-go
+  when need lemon     use lemonsqueezy-go
+}
+
+target rust {
+  when need database  use sqlx
+  when need id        use uuid-v7
+  when need stripe    use async-stripe
+  when need polar     use polar-rust
+  when need lemon     use lemonsqueezy-rust
+}
+
+target typescript {
+  notes: "ESM only; tagged unions over class hierarchies"
+  when need queue     use bullmq
+  when need id        use cuid2
+  when need database  use drizzle
+  when need stripe    use stripe-node
+  when need polar     use polar-sdk
+  when need lemon     use lemonsqueezy-node
+}
+
+target python {
+  when need queue     use celery
+  when need id        use ulid
+  when need database  use sqlalchemy
+  when need stripe    use stripe
+  when need polar     use polar-sdk
+  when need lemon     use lemonsqueezy-py
+}
