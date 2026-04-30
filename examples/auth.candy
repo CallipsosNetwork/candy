@@ -88,7 +88,7 @@ flow Signup(email: Email, password: Password, now: Timestamp, key: Key)
   step strength = PasswordStrength(password)
                   rescue reject WeakPassword(reason)
 
-  step taken    = if any u in User where u.email == email
+  step taken    = if any user in User where user.email == email
                   then reject EmailTaken
 
   step user     = ask User.create({
@@ -146,7 +146,7 @@ controller Auth {
     auth: none
     body: { email: Email, password: Password, idempotency_key: Key }
     map:
-      ok(r)                    -> 201 { user_id: r.user, token: r.token }
+      ok(result)               -> 201 { user_id: result.user, token: result.token }
       err(WeakPassword reason) -> 422 { error: "weak_password", reason }
       err(EmailTaken)          -> 409 { error: "email_taken" }
   }
@@ -155,7 +155,7 @@ controller Auth {
     auth: none
     body: { email: Email, password: Password }
     map:
-      ok(r)                   -> 200 { user_id: r.user, token: r.token }
+      ok(result)              -> 200 { user_id: result.user, token: result.token }
       err(InvalidCredentials) -> 401 { error: "invalid_credentials" }
   }
 
