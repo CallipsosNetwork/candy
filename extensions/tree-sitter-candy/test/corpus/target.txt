@@ -1,0 +1,43 @@
+==================
+target with notes and when need use
+==================
+
+target python {
+  notes: "ESM only; tagged unions"
+  when need queue use celery
+  when need hash  use argon2-cffi
+}
+
+---
+
+(source_file
+  (target_decl
+    name: (identifier)
+    (target_notes value: (string))
+    (target_when
+      concept: (library_name)
+      library: (library_name))
+    (target_when
+      concept: (library_name)
+      library: (library_name))))
+
+==================
+target with hyphenated library names
+==================
+
+target rust {
+  when need id use uuid-v7
+  when need hash use argon2
+}
+
+---
+
+(source_file
+  (target_decl
+    name: (identifier)
+    (target_when
+      concept: (library_name)
+      library: (library_name))
+    (target_when
+      concept: (library_name)
+      library: (library_name))))

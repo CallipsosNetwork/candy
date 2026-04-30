@@ -1,0 +1,88 @@
+==================
+actor with state and accepts
+==================
+
+actor Session(token: Token) {
+  state {
+    user: Id
+    revoked: bool = false
+  }
+
+  invariant "expires > issued"
+
+  accepts Revoke() -> unit {
+    intent: "Revoke the session."
+    effect: revoked = true
+    emit SessionRevoked { token: self.token }
+    commit
+  }
+}
+
+---
+
+(source_file
+  (actor_decl
+    name: (type_identifier)
+    (parameter
+      name: (identifier)
+      type: (identifier_type (type_identifier)))
+    body: (actor_body
+      (state_block
+        (state_field
+          name: (identifier)
+          type: (identifier_type (type_identifier)))
+        (state_field
+          name: (identifier)
+          type: (primitive_type)
+          default: (boolean)))
+      (invariant_decl
+        predicate: (string))
+      (accepts_decl
+        name: (type_identifier)
+        return_type: (unit_type)
+        body: (message_body
+          (intent_field value: (string))
+          (effect_stmt
+            value: (binary_expression
+              (identifier)
+              (boolean)))
+          (emit_stmt
+            event: (type_identifier)
+            payload: (struct_literal_expr
+              (struct_literal_entry
+                key: (identifier)
+                value: (field_access
+                  (identifier)
+                  field: (identifier)))))
+          (commit_stmt))))))
+
+==================
+actor with derive and subscribe
+==================
+
+actor TodoList(owner: Id) {
+  derive open = items where item.done == false
+  subscribe SessionRevoked -> Cleanup
+}
+
+---
+
+(source_file
+  (actor_decl
+    name: (type_identifier)
+    (parameter
+      name: (identifier)
+      type: (identifier_type (type_identifier)))
+    body: (actor_body
+      (derive_decl
+        name: (identifier)
+        value: (binary_expression
+          (where_expression
+            (identifier)
+            (field_access
+              (identifier)
+              field: (identifier)))
+          (boolean)))
+      (subscribe_decl
+        event: (type_identifier)
+        action: (type_identifier)))))

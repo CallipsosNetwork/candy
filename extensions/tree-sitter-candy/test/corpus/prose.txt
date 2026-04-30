@@ -1,0 +1,36 @@
+==================
+prose block with all sections
+==================
+
+prose {
+  intent: """Account signup, login, logout."""
+  exports:
+    actor User, Session
+    flow  Signup, Login
+  uses:
+    feature Wallet for Charge
+    external Stripe for Charge
+  policies: [BearerAuth]
+}
+
+---
+
+(source_file
+  (prose_block
+    (intent_field value: (prose_string))
+    (exports_field
+      (exports_line
+        (type_identifier)
+        (type_identifier))
+      (exports_line
+        (type_identifier)
+        (type_identifier)))
+    (uses_field
+      (uses_line
+        name: (type_identifier)
+        (type_identifier))
+      (uses_line
+        name: (type_identifier)
+        (type_identifier)))
+    (policies_field
+      (type_identifier))))

@@ -1,0 +1,5628 @@
+[
+  {
+    "type": "accepts_decl",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "message_body",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "generic_type",
+            "named": true
+          },
+          {
+            "type": "identifier_type",
+            "named": true
+          },
+          {
+            "type": "list_type",
+            "named": true
+          },
+          {
+            "type": "optional_type",
+            "named": true
+          },
+          {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
+            "type": "struct_type",
+            "named": true
+          },
+          {
+            "type": "union_type",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "parameter",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "actor_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "accepts_decl",
+          "named": true
+        },
+        {
+          "type": "audit_block",
+          "named": true
+        },
+        {
+          "type": "derive_decl",
+          "named": true
+        },
+        {
+          "type": "examples_field",
+          "named": true
+        },
+        {
+          "type": "field_decl",
+          "named": true
+        },
+        {
+          "type": "intent_field",
+          "named": true
+        },
+        {
+          "type": "invariant_decl",
+          "named": true
+        },
+        {
+          "type": "policies_field",
+          "named": true
+        },
+        {
+          "type": "state_block",
+          "named": true
+        },
+        {
+          "type": "subscribe_decl",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "actor_decl",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "actor_body",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "parameter",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "ask_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "audit_block",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "block_body",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "auth_field",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "basic",
+            "named": false
+          },
+          {
+            "type": "bearer",
+            "named": false
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "none",
+            "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "binary_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "block_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "field_decl",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "body_field",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "struct_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "boolean",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "call_expression",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "commit_stmt",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "compensate_action",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "compensate_expression",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "controller_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "intent_field",
+          "named": true
+        },
+        {
+          "type": "policies_field",
+          "named": true
+        },
+        {
+          "type": "route_decl",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "derive_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "effect_stmt",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "emit_stmt",
+    "named": true,
+    "fields": {
+      "event": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "payload": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "enum_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "type_identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "err_pattern",
+    "named": true,
+    "fields": {
+      "binding": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "variant": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "event_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "event_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "event_field",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "order_value",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "struct_type",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "example_item",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "example_line",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "example_line",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "examples_field",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "example_item",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "exports_field",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "exports_line",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "exports_line",
+    "named": true,
+    "fields": {
+      "kind": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "actor",
+            "named": false
+          },
+          {
+            "type": "event",
+            "named": false
+          },
+          {
+            "type": "flow",
+            "named": false
+          },
+          {
+            "type": "type",
+            "named": false
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "type_identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "external_actor_decl",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "actor_body",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "parameter",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "field_access",
+    "named": true,
+    "fields": {
+      "field": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "field_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "flow_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "commit_stmt",
+          "named": true
+        },
+        {
+          "type": "effect_stmt",
+          "named": true
+        },
+        {
+          "type": "emit_stmt",
+          "named": true
+        },
+        {
+          "type": "if_stmt",
+          "named": true
+        },
+        {
+          "type": "intent_field",
+          "named": true
+        },
+        {
+          "type": "require_stmt",
+          "named": true
+        },
+        {
+          "type": "step_stmt",
+          "named": true
+        },
+        {
+          "type": "tell_stmt",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "flow_decl",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "flow_body",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "generic_type",
+            "named": true
+          },
+          {
+            "type": "identifier_type",
+            "named": true
+          },
+          {
+            "type": "list_type",
+            "named": true
+          },
+          {
+            "type": "optional_type",
+            "named": true
+          },
+          {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
+            "type": "struct_type",
+            "named": true
+          },
+          {
+            "type": "union_type",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "parameter",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "generic_type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "generic_type",
+          "named": true
+        },
+        {
+          "type": "identifier_type",
+          "named": true
+        },
+        {
+          "type": "list_type",
+          "named": true
+        },
+        {
+          "type": "optional_type",
+          "named": true
+        },
+        {
+          "type": "primitive_type",
+          "named": true
+        },
+        {
+          "type": "struct_type",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "union_type",
+          "named": true
+        },
+        {
+          "type": "unit_type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "http_method",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "identifier_type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "type_identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "if_expr",
+    "named": true,
+    "fields": {
+      "alternative": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      },
+      "condition": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      },
+      "consequence": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "if_stmt",
+    "named": true,
+    "fields": {
+      "alternative": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      },
+      "condition": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      },
+      "consequence": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "index_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "intent_field",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "invariant_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "predicate": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "list_literal",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "list_type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "generic_type",
+          "named": true
+        },
+        {
+          "type": "identifier_type",
+          "named": true
+        },
+        {
+          "type": "list_type",
+          "named": true
+        },
+        {
+          "type": "optional_type",
+          "named": true
+        },
+        {
+          "type": "primitive_type",
+          "named": true
+        },
+        {
+          "type": "struct_type",
+          "named": true
+        },
+        {
+          "type": "union_type",
+          "named": true
+        },
+        {
+          "type": "unit_type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "map_arm",
+    "named": true,
+    "fields": {
+      "pattern": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "err_pattern",
+            "named": true
+          },
+          {
+            "type": "ok_pattern",
+            "named": true
+          }
+        ]
+      },
+      "shape": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      },
+      "status": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "integer",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "map_field",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "map_arm",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "message_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "commit_stmt",
+          "named": true
+        },
+        {
+          "type": "effect_stmt",
+          "named": true
+        },
+        {
+          "type": "emit_stmt",
+          "named": true
+        },
+        {
+          "type": "if_stmt",
+          "named": true
+        },
+        {
+          "type": "intent_field",
+          "named": true
+        },
+        {
+          "type": "require_stmt",
+          "named": true
+        },
+        {
+          "type": "step_stmt",
+          "named": true
+        },
+        {
+          "type": "tell_stmt",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "meta_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "meta_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "meta_field",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "generic_type",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "identifier_type",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "list_type",
+            "named": true
+          },
+          {
+            "type": "optional_type",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "struct_type",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "union_type",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "ok_pattern",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "optional_type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "generic_type",
+          "named": true
+        },
+        {
+          "type": "identifier_type",
+          "named": true
+        },
+        {
+          "type": "primitive_type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "order_value",
+    "named": true,
+    "fields": {
+      "field": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "parameter",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "generic_type",
+            "named": true
+          },
+          {
+            "type": "identifier_type",
+            "named": true
+          },
+          {
+            "type": "list_type",
+            "named": true
+          },
+          {
+            "type": "optional_type",
+            "named": true
+          },
+          {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
+            "type": "struct_type",
+            "named": true
+          },
+          {
+            "type": "union_type",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "parenthesized",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "policies_field",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "type_identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "policy_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "examples_field",
+          "named": true
+        },
+        {
+          "type": "field_decl",
+          "named": true
+        },
+        {
+          "type": "intent_field",
+          "named": true
+        },
+        {
+          "type": "policies_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "primitive_type",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "prose_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "exports_field",
+          "named": true
+        },
+        {
+          "type": "field_decl",
+          "named": true
+        },
+        {
+          "type": "intent_field",
+          "named": true
+        },
+        {
+          "type": "policies_field",
+          "named": true
+        },
+        {
+          "type": "uses_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "quantifier_expression",
+    "named": true,
+    "fields": {
+      "binding": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "source": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "reject_action",
+    "named": true,
+    "fields": {
+      "payload": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "(",
+            "named": false
+          },
+          {
+            "type": ")",
+            "named": false
+          },
+          {
+            "type": ",",
+            "named": false
+          },
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      },
+      "variant": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "reject_expression",
+    "named": true,
+    "fields": {
+      "payload": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "(",
+            "named": false
+          },
+          {
+            "type": ")",
+            "named": false
+          },
+          {
+            "type": ",",
+            "named": false
+          },
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      },
+      "variant": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "require_stmt",
+    "named": true,
+    "fields": {
+      "predicate": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "rescue_clause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "rescue_clause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "compensate_action",
+          "named": true
+        },
+        {
+          "type": "reject_action",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "route_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "auth_field",
+          "named": true
+        },
+        {
+          "type": "body_field",
+          "named": true
+        },
+        {
+          "type": "field_decl",
+          "named": true
+        },
+        {
+          "type": "intent_field",
+          "named": true
+        },
+        {
+          "type": "map_field",
+          "named": true
+        },
+        {
+          "type": "policies_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "route_decl",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "route_body",
+            "named": true
+          }
+        ]
+      },
+      "method": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "http_method",
+            "named": true
+          }
+        ]
+      },
+      "path": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "route_path",
+            "named": true
+          }
+        ]
+      },
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "source_file",
+    "named": true,
+    "root": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "actor_decl",
+          "named": true
+        },
+        {
+          "type": "controller_decl",
+          "named": true
+        },
+        {
+          "type": "enum_decl",
+          "named": true
+        },
+        {
+          "type": "event_decl",
+          "named": true
+        },
+        {
+          "type": "external_actor_decl",
+          "named": true
+        },
+        {
+          "type": "flow_decl",
+          "named": true
+        },
+        {
+          "type": "invariant_decl",
+          "named": true
+        },
+        {
+          "type": "policy_decl",
+          "named": true
+        },
+        {
+          "type": "prose_block",
+          "named": true
+        },
+        {
+          "type": "target_decl",
+          "named": true
+        },
+        {
+          "type": "type_decl",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "state_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "state_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "state_field",
+    "named": true,
+    "fields": {
+      "default": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "generic_type",
+            "named": true
+          },
+          {
+            "type": "identifier_type",
+            "named": true
+          },
+          {
+            "type": "list_type",
+            "named": true
+          },
+          {
+            "type": "optional_type",
+            "named": true
+          },
+          {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
+            "type": "struct_type",
+            "named": true
+          },
+          {
+            "type": "union_type",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "step_stmt",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_",
+            "named": false
+          },
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "rescue_clause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "string",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "string_interpolation",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "string_interpolation",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "struct_field",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "generic_type",
+            "named": true
+          },
+          {
+            "type": "identifier_type",
+            "named": true
+          },
+          {
+            "type": "list_type",
+            "named": true
+          },
+          {
+            "type": "optional_type",
+            "named": true
+          },
+          {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
+            "type": "struct_type",
+            "named": true
+          },
+          {
+            "type": "union_type",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "struct_literal_entry",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "struct_literal_expr",
+    "named": true,
+    "fields": {
+      "type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "struct_literal_entry",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "struct_type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "struct_field",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "subscribe_decl",
+    "named": true,
+    "fields": {
+      "action": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      },
+      "event": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "target_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "target_notes",
+          "named": true
+        },
+        {
+          "type": "target_when",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "target_notes",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "target_when",
+    "named": true,
+    "fields": {
+      "concept": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "library_name",
+            "named": true
+          }
+        ]
+      },
+      "library": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "library_name",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "tell_stmt",
+    "named": true,
+    "fields": {
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ask_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "compensate_expression",
+            "named": true
+          },
+          {
+            "type": "duration",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "integer",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized",
+            "named": true
+          },
+          {
+            "type": "prose_string",
+            "named": true
+          },
+          {
+            "type": "quantifier_expression",
+            "named": true
+          },
+          {
+            "type": "reject_expression",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          },
+          {
+            "type": "struct_literal_expr",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "where_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "type_decl",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "meta_block",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "underlying": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "primitive_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "unary_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "union_type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "generic_type",
+          "named": true
+        },
+        {
+          "type": "identifier_type",
+          "named": true
+        },
+        {
+          "type": "list_type",
+          "named": true
+        },
+        {
+          "type": "optional_type",
+          "named": true
+        },
+        {
+          "type": "primitive_type",
+          "named": true
+        },
+        {
+          "type": "struct_type",
+          "named": true
+        },
+        {
+          "type": "union_type",
+          "named": true
+        },
+        {
+          "type": "unit_type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "uses_field",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "uses_line",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "uses_line",
+    "named": true,
+    "fields": {
+      "kind": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "external",
+            "named": false
+          },
+          {
+            "type": "feature",
+            "named": false
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "type_identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "where_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "ask_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "compensate_expression",
+          "named": true
+        },
+        {
+          "type": "duration",
+          "named": true
+        },
+        {
+          "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "if_expr",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
+          "named": true
+        },
+        {
+          "type": "prose_string",
+          "named": true
+        },
+        {
+          "type": "quantifier_expression",
+          "named": true
+        },
+        {
+          "type": "reject_expression",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "struct_literal_expr",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "where_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "!",
+    "named": false
+  },
+  {
+    "type": "!=",
+    "named": false
+  },
+  {
+    "type": "\"",
+    "named": false
+  },
+  {
+    "type": "$",
+    "named": false
+  },
+  {
+    "type": "${",
+    "named": false
+  },
+  {
+    "type": "&&",
+    "named": false
+  },
+  {
+    "type": "(",
+    "named": false
+  },
+  {
+    "type": ")",
+    "named": false
+  },
+  {
+    "type": "*",
+    "named": false
+  },
+  {
+    "type": "+",
+    "named": false
+  },
+  {
+    "type": ",",
+    "named": false
+  },
+  {
+    "type": "-",
+    "named": false
+  },
+  {
+    "type": "->",
+    "named": false
+  },
+  {
+    "type": ".",
+    "named": false
+  },
+  {
+    "type": "/",
+    "named": false
+  },
+  {
+    "type": ":",
+    "named": false
+  },
+  {
+    "type": ";",
+    "named": false
+  },
+  {
+    "type": "<",
+    "named": false
+  },
+  {
+    "type": "<=",
+    "named": false
+  },
+  {
+    "type": "=",
+    "named": false
+  },
+  {
+    "type": "==",
+    "named": false
+  },
+  {
+    "type": ">",
+    "named": false
+  },
+  {
+    "type": ">=",
+    "named": false
+  },
+  {
+    "type": "?",
+    "named": false
+  },
+  {
+    "type": "DELETE",
+    "named": false
+  },
+  {
+    "type": "GET",
+    "named": false
+  },
+  {
+    "type": "HEAD",
+    "named": false
+  },
+  {
+    "type": "OPTIONS",
+    "named": false
+  },
+  {
+    "type": "PATCH",
+    "named": false
+  },
+  {
+    "type": "POST",
+    "named": false
+  },
+  {
+    "type": "PUT",
+    "named": false
+  },
+  {
+    "type": "[",
+    "named": false
+  },
+  {
+    "type": "]",
+    "named": false
+  },
+  {
+    "type": "_",
+    "named": false
+  },
+  {
+    "type": "accepts",
+    "named": false
+  },
+  {
+    "type": "actor",
+    "named": false
+  },
+  {
+    "type": "after",
+    "named": false
+  },
+  {
+    "type": "any",
+    "named": false
+  },
+  {
+    "type": "ask",
+    "named": false
+  },
+  {
+    "type": "audit",
+    "named": false
+  },
+  {
+    "type": "auth",
+    "named": false
+  },
+  {
+    "type": "basic",
+    "named": false
+  },
+  {
+    "type": "bearer",
+    "named": false
+  },
+  {
+    "type": "before",
+    "named": false
+  },
+  {
+    "type": "body",
+    "named": false
+  },
+  {
+    "type": "bool",
+    "named": false
+  },
+  {
+    "type": "by",
+    "named": false
+  },
+  {
+    "type": "bytes",
+    "named": false
+  },
+  {
+    "type": "comment",
+    "named": true
+  },
+  {
+    "type": "commit",
+    "named": false
+  },
+  {
+    "type": "compensate",
+    "named": false
+  },
+  {
+    "type": "controller",
+    "named": false
+  },
+  {
+    "type": "decimal",
+    "named": false
+  },
+  {
+    "type": "derive",
+    "named": false
+  },
+  {
+    "type": "duration",
+    "named": true
+  },
+  {
+    "type": "effect",
+    "named": false
+  },
+  {
+    "type": "else",
+    "named": false
+  },
+  {
+    "type": "emit",
+    "named": false
+  },
+  {
+    "type": "enum",
+    "named": false
+  },
+  {
+    "type": "err",
+    "named": false
+  },
+  {
+    "type": "event",
+    "named": false
+  },
+  {
+    "type": "examples",
+    "named": false
+  },
+  {
+    "type": "exports",
+    "named": false
+  },
+  {
+    "type": "external",
+    "named": false
+  },
+  {
+    "type": "false",
+    "named": false
+  },
+  {
+    "type": "feature",
+    "named": false
+  },
+  {
+    "type": "flow",
+    "named": false
+  },
+  {
+    "type": "for",
+    "named": false
+  },
+  {
+    "type": "identifier",
+    "named": true
+  },
+  {
+    "type": "if",
+    "named": false
+  },
+  {
+    "type": "in",
+    "named": false
+  },
+  {
+    "type": "instant",
+    "named": false
+  },
+  {
+    "type": "int",
+    "named": false
+  },
+  {
+    "type": "integer",
+    "named": true
+  },
+  {
+    "type": "intent",
+    "named": false
+  },
+  {
+    "type": "invariant",
+    "named": false
+  },
+  {
+    "type": "library_name",
+    "named": true
+  },
+  {
+    "type": "map",
+    "named": false
+  },
+  {
+    "type": "need",
+    "named": false
+  },
+  {
+    "type": "none",
+    "named": false
+  },
+  {
+    "type": "not",
+    "named": false
+  },
+  {
+    "type": "notes",
+    "named": false
+  },
+  {
+    "type": "ok",
+    "named": false
+  },
+  {
+    "type": "opaque",
+    "named": false
+  },
+  {
+    "type": "policies",
+    "named": false
+  },
+  {
+    "type": "policy",
+    "named": false
+  },
+  {
+    "type": "prose",
+    "named": false
+  },
+  {
+    "type": "prose_string",
+    "named": true
+  },
+  {
+    "type": "reject",
+    "named": false
+  },
+  {
+    "type": "require",
+    "named": false
+  },
+  {
+    "type": "rescue",
+    "named": false
+  },
+  {
+    "type": "route_path",
+    "named": true
+  },
+  {
+    "type": "state",
+    "named": false
+  },
+  {
+    "type": "step",
+    "named": false
+  },
+  {
+    "type": "string",
+    "named": false
+  },
+  {
+    "type": "subscribe",
+    "named": false
+  },
+  {
+    "type": "target",
+    "named": false
+  },
+  {
+    "type": "tell",
+    "named": false
+  },
+  {
+    "type": "then",
+    "named": false
+  },
+  {
+    "type": "true",
+    "named": false
+  },
+  {
+    "type": "type",
+    "named": false
+  },
+  {
+    "type": "type_identifier",
+    "named": true
+  },
+  {
+    "type": "unit_type",
+    "named": true
+  },
+  {
+    "type": "until",
+    "named": false
+  },
+  {
+    "type": "use",
+    "named": false
+  },
+  {
+    "type": "uses",
+    "named": false
+  },
+  {
+    "type": "when",
+    "named": false
+  },
+  {
+    "type": "where",
+    "named": false
+  },
+  {
+    "type": "{",
+    "named": false
+  },
+  {
+    "type": "|",
+    "named": false
+  },
+  {
+    "type": "||",
+    "named": false
+  },
+  {
+    "type": "}",
+    "named": false
+  }
+]

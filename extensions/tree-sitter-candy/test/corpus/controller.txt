@@ -1,0 +1,104 @@
+==================
+controller with route body and map arms
+==================
+
+controller Auth {
+  POST /signup -> Signup(email, password) {
+    auth: none
+    body: { email: Email, password: Password }
+    map:
+      ok(r)                    -> 201 { user_id: r.user }
+      err(WeakPassword reason) -> 422 { error: "weak" }
+  }
+}
+
+---
+
+(source_file
+  (controller_decl
+    name: (type_identifier)
+    (route_decl
+      method: (http_method)
+      path: (route_path)
+      target: (call_expression
+        name: (type_identifier)
+        (identifier)
+        (identifier))
+      body: (route_body
+        (auth_field)
+        (body_field
+          value: (struct_type
+            (struct_field
+              name: (identifier)
+              type: (identifier_type (type_identifier)))
+            (struct_field
+              name: (identifier)
+              type: (identifier_type (type_identifier)))))
+        (map_field
+          (map_arm
+            pattern: (ok_pattern (identifier))
+            status: (integer)
+            shape: (struct_literal_expr
+              (struct_literal_entry
+                key: (identifier)
+                value: (field_access
+                  (identifier)
+                  field: (identifier)))))
+          (map_arm
+            pattern: (err_pattern
+              variant: (type_identifier)
+              binding: (identifier))
+            status: (integer)
+            shape: (struct_literal_expr
+              (struct_literal_entry
+                key: (identifier)
+                value: (string)))))))))
+
+==================
+controller with multiple routes
+==================
+
+controller Todos {
+  GET /todos/:id -> Read(id) {
+    auth: bearer
+    map:
+      ok(t) -> 200 t
+  }
+
+  DELETE /todos/:id -> Delete(id) {
+    auth: bearer
+    map:
+      ok(_) -> 204
+  }
+}
+
+---
+
+(source_file
+  (controller_decl
+    name: (type_identifier)
+    (route_decl
+      method: (http_method)
+      path: (route_path)
+      target: (call_expression
+        name: (type_identifier)
+        (identifier))
+      body: (route_body
+        (auth_field)
+        (map_field
+          (map_arm
+            pattern: (ok_pattern (identifier))
+            status: (integer)
+            shape: (identifier)))))
+    (route_decl
+      method: (http_method)
+      path: (route_path)
+      target: (call_expression
+        name: (type_identifier)
+        (identifier))
+      body: (route_body
+        (auth_field)
+        (map_field
+          (map_arm
+            pattern: (ok_pattern)
+            status: (integer)))))))

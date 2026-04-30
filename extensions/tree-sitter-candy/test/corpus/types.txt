@@ -1,0 +1,62 @@
+==================
+branded primitive without meta
+==================
+
+type Flag bool
+
+---
+
+(source_file
+  (type_decl
+    name: (type_identifier)
+    underlying: (primitive_type)))
+
+==================
+branded primitive with meta
+==================
+
+type Money int { unit: minor, currency: USD, round: nearest }
+
+---
+
+(source_file
+  (type_decl
+    name: (type_identifier)
+    underlying: (primitive_type)
+    body: (meta_block
+      (meta_field key: (identifier) value: (identifier))
+      (meta_field key: (identifier) value: (type_identifier))
+      (meta_field key: (identifier) value: (identifier)))))
+
+==================
+record type
+==================
+
+type LineItem {
+  slot: SlotId
+  price: Money
+}
+
+---
+
+(source_file
+  (type_decl
+    name: (type_identifier)
+    body: (meta_block
+      (meta_field key: (identifier) value: (type_identifier))
+      (meta_field key: (identifier) value: (type_identifier)))))
+
+==================
+enum
+==================
+
+enum Status { Pending, Confirmed, Cancelled }
+
+---
+
+(source_file
+  (enum_decl
+    name: (type_identifier)
+    (type_identifier)
+    (type_identifier)
+    (type_identifier)))

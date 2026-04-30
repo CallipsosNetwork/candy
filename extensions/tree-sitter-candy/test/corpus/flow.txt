@@ -1,0 +1,107 @@
+==================
+flow with rescue compensate and reject
+==================
+
+flow Signup(email: Email) -> Result<Id, EmailTaken> {
+  intent: """Multi-line intent."""
+
+  step user = ask User.create({ id: generate(), email })
+              rescue compensate user; reject EmailTaken
+
+  emit UserSignedUp { user: user.id }
+  commit user.id
+}
+
+---
+
+(source_file
+  (flow_decl
+    name: (type_identifier)
+    (parameter
+      name: (identifier)
+      type: (identifier_type (type_identifier)))
+    return_type: (generic_type
+      (type_identifier)
+      (identifier_type (type_identifier))
+      (identifier_type (type_identifier)))
+    body: (flow_body
+      (intent_field value: (prose_string))
+      (step_stmt
+        name: (identifier)
+        value: (ask_expression
+          (call_expression
+            name: (field_access
+              (type_identifier)
+              field: (identifier))
+            (struct_literal_expr
+              (struct_literal_entry
+                key: (identifier)
+                value: (call_expression name: (identifier)))
+              (struct_literal_entry (identifier)))))
+        (rescue_clause
+          (compensate_action name: (identifier))
+          (reject_action variant: (type_identifier))))
+      (emit_stmt
+        event: (type_identifier)
+        payload: (struct_literal_expr
+          (struct_literal_entry
+            key: (identifier)
+            value: (field_access
+              (identifier)
+              field: (identifier)))))
+      (commit_stmt value: (field_access
+        (identifier)
+        field: (identifier))))))
+
+==================
+flow with multiple steps and commit struct
+==================
+
+flow Login(email: Email) -> Result<Token, BadCreds> {
+  step user = ask User.findBy(email)
+  step ok   = if not verify(password) then reject BadCreds
+  commit { user: user.id, token: session.token }
+}
+
+---
+
+(source_file
+  (flow_decl
+    name: (type_identifier)
+    (parameter
+      name: (identifier)
+      type: (identifier_type (type_identifier)))
+    return_type: (generic_type
+      (type_identifier)
+      (identifier_type (type_identifier))
+      (identifier_type (type_identifier)))
+    body: (flow_body
+      (step_stmt
+        name: (identifier)
+        value: (ask_expression
+          (call_expression
+            name: (field_access
+              (type_identifier)
+              field: (identifier))
+            (identifier))))
+      (step_stmt
+        name: (identifier)
+        value: (if_expr
+          condition: (unary_expression
+            (call_expression
+              name: (identifier)
+              (identifier)))
+          consequence: (reject_expression
+            variant: (type_identifier))))
+      (commit_stmt
+        value: (struct_literal_expr
+          (struct_literal_entry
+            key: (identifier)
+            value: (field_access
+              (identifier)
+              field: (identifier)))
+          (struct_literal_entry
+            key: (identifier)
+            value: (field_access
+              (identifier)
+              field: (identifier))))))))

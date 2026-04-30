@@ -1,0 +1,20 @@
+{
+  "name": "tree-sitter-candy",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for the candy specification language",
+  "main": "bindings/node",
+  "keywords": [
+    "parser",
+    "tree-sitter",
+    "candy"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "tree-sitter generate",
+    "test": "tree-sitter test",
+    "parse": "tree-sitter parse"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.24.7"
+  }
+}
