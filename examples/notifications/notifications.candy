@@ -1,47 +1,468 @@
-// notifications.candy — TODO: implement per README.md scope.
+// notifications.candy — event-driven fan-out to email and SMS providers.
 //
-// Event-driven async pipeline: a NotificationWorker subscribes to
-// internal events (UserSignedUp, OrderShipped) and fans them out to
-// email and SMS providers. Smallest exercise of subscribe + external
-// + retry-on-failure via re-emit.
+// A NotificationWorker actor subscribes to trigger events and dispatches
+// user-facing notifications via external email and SMS providers.
+// Email goes through SendGrid → Mailgun → Resend (rescue chain).
+// SMS goes through Twilio → Vonage (rescue chain).
+// Every dispatch creates a Notification actor that tracks delivery status.
 
 prose {
   intent: """
     Fan-out delivery of internal events to user-facing channels.
-    A NotificationWorker actor subscribes to UserSignedUp and
-    OrderShipped, looks up the user's contact preferences, and
-    dispatches to Email and/or SMS providers. Failures re-emit a
-    delayed retry envelope; permanent failures emit
-    NotificationFailed for downstream observability.
+    A NotificationWorker subscribes to UserSignedUp, OrderShipped,
+    BookingConfirmed, and PasswordReset, then dispatches to Email and/or
+    SMS providers. Each dispatch is a Notification actor that tracks its
+    own status and idempotency key.
+
+    The hero patterns here are: (a) two multi-provider external actors with
+    Actor[Tag] call-site selection, (b) rescue chains across all providers
+    inside SendEmail and SendSMS, and (c) actor-level subscribe blocks for
+    fan-out.
+
+    DeliveryAtLeastOnce ensures every trigger event resolves to either a
+    NotificationSent or a NotificationFailed — no silent drops.
   """
 
   exports:
     actor NotificationWorker
-    flow  Send, Retry
+    actor Notification
+    flow  SendEmail, SendSMS
+    flow  OnUserSignedUp, OnOrderShipped, OnBookingConfirmed, OnPasswordReset
     event NotificationSent, NotificationFailed
 
+  // In a multi-feature project, trigger events come from other features:
+  //   uses: feature auth   for event UserSignedUp, PasswordReset
+  //   uses: feature orders for event OrderShipped
+  //   uses: feature booking for event BookingConfirmed
+  // For this standalone example they are declared below so the worker
+  // can subscribe without cross-feature wiring.
   uses:
-    external Email for SendEmail
-    external SMS   for SendSMS
+    external Email for Send
+    external SMS   for Send
 
   policies: [DeliveryAtLeastOnce]
 }
 
-// TODO: types — Id, Timestamp, Key, EmailAddress, PhoneNumber,
-//       NotificationKind enum (Welcome, Shipped), Channel enum
-//       (EmailChannel, SMSChannel), DeliveryAttempt record.
-// TODO: actor NotificationWorker — subscribes to UserSignedUp,
-//       OrderShipped (declared in uses); minimal state (recent
-//       attempts, dedup keys).
-// TODO: external actor Email with providers: [SendGrid, Mailgun,
-//       Resend]; accepts SendEmail; emits EmailDelivered, EmailBounced.
-// TODO: external actor SMS with providers: [Twilio, Vonage];
-//       accepts SendSMS; emits SMSDelivered, SMSFailed.
-// TODO: flow Send(recipient, kind, channel, key, now) — picks a
-//       provider via Actor[Tag] and dispatches.
-// TODO: flow Retry(attempt, now, key) — re-emits with exponential
-//       backoff up to MaxAttempts; on terminal failure emits
-//       NotificationFailed.
-// TODO: events NotificationSent, NotificationFailed.
-// TODO: policy DeliveryAtLeastOnce — feature-scope.
-// TODO: controller Notifications (admin-only test/replay routes).
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type Id        opaque  { max: 64 }
+type Timestamp instant { tz: utc }
+type Key       opaque  { max: 128 }
+type Email     string  { max: 320, format: rfc5322 }
+type Phone     string  { max: 32, format: e164 }
+type MessageId opaque  { max: 128 }
+
+enum Channel            { Email, SMS }
+enum NotificationStatus { Pending, Sent, Failed }
+
+// ---------------------------------------------------------------------------
+// Trigger events — declared locally for standalone use
+//
+// In a multi-feature project these would be imported via uses: above.
+// ---------------------------------------------------------------------------
+
+// Email-only: a welcome email on sign-up.
+event UserSignedUp {
+  payload:  { user: Id, email: Email, at: Timestamp }
+  delivery: eager
+}
+
+// Email + SMS: shipping notification with optional phone for SMS.
+event OrderShipped {
+  payload:  { order: Id, recipient: Id, recipient_email: Email, recipient_phone: Phone?, tracking: string, at: Timestamp }
+  delivery: eager
+}
+
+// Email-only: booking confirmation with no SMS.
+event BookingConfirmed {
+  payload:  { booking: Id, guest: Id, guest_email: Email, at: Timestamp }
+  delivery: eager
+}
+
+// Email-only: a password reset link is time-sensitive; SMS would require
+// a short-code service beyond this example's scope.
+event PasswordReset {
+  payload:  { user: Id, email: Email, token: string, at: Timestamp }
+  delivery: strict
+}
+
+// ---------------------------------------------------------------------------
+// External actors
+// ---------------------------------------------------------------------------
+
+external actor Email {
+  intent: "Transactional email delivery via SendGrid, Mailgun, or Resend."
+
+  providers: [SendGrid, Mailgun, Resend]
+
+  config SendGrid: api_key:        secret "SENDGRID_KEY"
+                   webhook_secret: secret "SENDGRID_WEBHOOK_SECRET"
+  config Mailgun:  api_key:        secret "MAILGUN_KEY"
+                   domain:         secret "MAILGUN_DOMAIN"
+                   webhook_secret: secret "MAILGUN_WEBHOOK_SECRET"
+  config Resend:   api_key:        secret "RESEND_KEY"
+                   webhook_secret: secret "RESEND_WEBHOOK_SECRET"
+
+  accepts Send(to: Email, subject: string, body: string, key: Key)
+    -> Result<MessageId, EmailDeclined | NetworkError | RateLimited>
+
+  emits Delivered { message: MessageId, at: Timestamp }
+  emits Bounced   { message: MessageId, reason: string, at: Timestamp }
+}
+
+external actor SMS {
+  intent: "Transactional SMS delivery via Twilio or Vonage."
+
+  providers: [Twilio, Vonage]
+
+  config Twilio: api_key:     secret "TWILIO_KEY"
+                 api_secret:  secret "TWILIO_SECRET"
+                 from_number: secret "TWILIO_FROM"
+  config Vonage: api_key:     secret "VONAGE_KEY"
+                 api_secret:  secret "VONAGE_SECRET"
+                 from_number: secret "VONAGE_FROM"
+
+  accepts Send(to: Phone, body: string, key: Key)
+    -> Result<MessageId, SMSDeclined | NetworkError | RateLimited>
+
+  emits Delivered { message: MessageId, at: Timestamp }
+  emits Failed    { message: MessageId, reason: string, at: Timestamp }
+}
+
+// ---------------------------------------------------------------------------
+// Actor: Notification
+//
+// One instance per dispatch. Tracks delivery status, the provider used,
+// and the provider-assigned message id. Created by SendEmail / SendSMS.
+// ---------------------------------------------------------------------------
+
+actor Notification(id: Id) {
+  state {
+    trigger_event:  string                // "UserSignedUp", "OrderShipped", etc.
+    trigger_id:     Id                    // originating entity id (user, order, …)
+    channel:        Channel
+    recipient:      string                // email address or E.164 phone
+    template:       string                // e.g. "welcome", "order-shipped"
+    status:         NotificationStatus = Pending
+    provider_used:  string?               // populated on success
+    message_id:     MessageId?            // returned by external actor on success
+    attempts:       int = 0
+    last_error:     string?
+    created:        Timestamp
+    updated:        Timestamp
+  }
+
+  invariant "status == Sent implies message_id != none and provider_used != none"
+
+  accepts MarkSent(provider: string, message: MessageId, now: Timestamp) -> unit {
+    intent: "Record a successful delivery. Idempotent: no-op if already Sent."
+    step already = if status == Sent then commit
+    effect: status        = Sent
+    effect: provider_used = provider
+    effect: message_id    = message
+    effect: updated       = now
+    commit
+  }
+
+  accepts MarkFailed(reason: string, now: Timestamp) -> unit {
+    intent: "Record a failed attempt. Increments the attempt counter."
+    effect: status     = Failed
+    effect: attempts   = attempts + 1
+    effect: last_error = reason
+    effect: updated    = now
+    commit
+  }
+
+  // Webhook backstop: if the provider asynchronously confirms delivery via
+  // the Email external actor's Delivered event, reconcile the status to Sent.
+  // Guards on message_id so only the matching notification reacts.
+  subscribe Email.Delivered -> on event(message, at) {
+    if message_id == message then ask MarkSent(provider_used, message, at)
+  }
+
+  // Same backstop for SMS. Provider fires Delivered on async settlement.
+  subscribe SMS.Delivered -> on event(message, at) {
+    if message_id == message then ask MarkSent(provider_used, message, at)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Actor: NotificationWorker
+//
+// Singleton coordinator. Stateless — all persistent tracking lives in
+// individual Notification actors. Subscribes to trigger events and fans out
+// to the appropriate OnXxx handler flows.
+// ---------------------------------------------------------------------------
+
+actor NotificationWorker(id: Id) {
+  state {}
+
+  invariant "exactly one NotificationWorker exists per deployment"
+
+  subscribe UserSignedUp -> on event(user, email, at) {
+    ask OnUserSignedUp(user, email, at)
+  }
+
+  subscribe OrderShipped -> on event(order, recipient, recipient_email, recipient_phone, tracking, at) {
+    ask OnOrderShipped(order, recipient, recipient_email, recipient_phone, tracking, at)
+  }
+
+  subscribe BookingConfirmed -> on event(booking, guest, guest_email, at) {
+    ask OnBookingConfirmed(booking, guest, guest_email, at)
+  }
+
+  subscribe PasswordReset -> on event(user, email, token, at) {
+    ask OnPasswordReset(user, email, token, at)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Policies
+// ---------------------------------------------------------------------------
+
+policy DeliveryAtLeastOnce {
+  intent: """
+    Every trigger event handled by NotificationWorker must result in either a
+    NotificationSent or a NotificationFailed event being emitted. Silent drops
+    are not permitted. This policy is enforced by the rescue commit arms on each
+    OnXxx flow: even when all providers fail, NotificationFailed is emitted via
+    the SendEmail / SendSMS flows before the outer flow commits.
+  """
+  examples:
+    - given: UserSignedUp dispatched, SendGrid accepts
+      then:  ok(NotificationSent emitted)
+
+    - given: UserSignedUp dispatched, all email providers reject
+      then:  ok(NotificationFailed emitted)
+}
+
+policy AdminGated {
+  intent: """
+    Route is restricted to authenticated users with the Admin role. Any
+    authenticated non-admin receives NotAuthorized. Unauthenticated requests
+    are rejected by the bearer auth guard before this policy runs.
+  """
+  examples:
+    - given: caller has role Admin
+      then:  ok
+
+    - given: caller is authenticated but lacks Admin role
+      then:  err(NotAuthorized)
+}
+
+// ---------------------------------------------------------------------------
+// Output events
+// ---------------------------------------------------------------------------
+
+event NotificationSent {
+  payload:  { notification: Id, channel: Channel, provider: string, at: Timestamp }
+  delivery: eager
+}
+
+event NotificationFailed {
+  payload:  { notification: Id, channel: Channel, attempts: int, at: Timestamp }
+  delivery: strict
+}
+
+// ---------------------------------------------------------------------------
+// Flows: SendEmail
+//
+// Creates a Notification actor then attempts SendGrid → Mailgun → Resend in
+// a rescue chain. Each failed arm records the attempt on the actor before
+// falling through to the next provider. On exhaustion rejects AllProvidersFailed
+// and emits NotificationFailed.
+// ---------------------------------------------------------------------------
+
+flow SendEmail(
+  to:            Email,
+  template:      string,
+  trigger_event: string,
+  trigger_id:    Id,
+  now:           Timestamp,
+  key:           Key,
+) -> Result<{ notification: Id, provider: string, message: MessageId }, AllProvidersFailed>
+{
+  intent: """
+    Send a templated email. Tries SendGrid first; falls back to Mailgun, then
+    Resend. Records every per-provider attempt on the Notification actor for
+    observability. On exhaustion emits NotificationFailed and rejects.
+  """
+
+  step notification_id = generate()
+
+  step notification = ask Notification.create({
+    id:            notification_id,
+    trigger_event,
+    trigger_id,
+    channel:       Email,
+    recipient:     to,
+    template,
+    status:        Pending,
+    provider_used: none,
+    message_id:    none,
+    attempts:      0,
+    last_error:    none,
+    created:       now,
+    updated:       now,
+  })
+
+  step subject = renderSubject(template, trigger_id)
+  step body    = renderBody(template, trigger_id)
+
+  // Rescue chain across all three email providers.
+  // Each rescue arm records the failure before trying the next provider.
+  step send_result =
+    ask Email[SendGrid].Send(to, subject, body, key)
+      rescue ask Notification(notification_id).MarkFailed("SendGrid failed", now);
+             ask Email[Mailgun].Send(to, subject, body, key)
+      rescue ask Notification(notification_id).MarkFailed("Mailgun failed", now);
+             ask Email[Resend].Send(to, subject, body, key)
+      rescue ask Notification(notification_id).MarkFailed("Resend failed; all providers exhausted", now);
+             emit NotificationFailed { notification: notification_id, channel: Email, attempts: notification.attempts + 1, at: now };
+             reject AllProvidersFailed
+
+  ask Notification(notification_id).MarkSent(send_result.provider, send_result, now)
+  emit NotificationSent { notification: notification_id, channel: Email, provider: send_result.provider, at: now }
+  commit { notification: notification_id, provider: send_result.provider, message: send_result }
+}
+
+// ---------------------------------------------------------------------------
+// Flows: SendSMS
+//
+// Mirror of SendEmail for the SMS channel. Twilio → Vonage rescue chain.
+// ---------------------------------------------------------------------------
+
+flow SendSMS(
+  to:            Phone,
+  template:      string,
+  trigger_event: string,
+  trigger_id:    Id,
+  now:           Timestamp,
+  key:           Key,
+) -> Result<{ notification: Id, provider: string, message: MessageId }, AllProvidersFailed>
+{
+  intent: """
+    Send a templated SMS. Tries Twilio first; falls back to Vonage. Records
+    per-provider failures on the Notification actor. On exhaustion emits
+    NotificationFailed and rejects.
+  """
+
+  step notification_id = generate()
+
+  step notification = ask Notification.create({
+    id:            notification_id,
+    trigger_event,
+    trigger_id,
+    channel:       SMS,
+    recipient:     to,
+    template,
+    status:        Pending,
+    provider_used: none,
+    message_id:    none,
+    attempts:      0,
+    last_error:    none,
+    created:       now,
+    updated:       now,
+  })
+
+  step body = renderBody(template, trigger_id)
+
+  // Rescue chain across both SMS providers.
+  step send_result =
+    ask SMS[Twilio].Send(to, body, key)
+      rescue ask Notification(notification_id).MarkFailed("Twilio failed", now);
+             ask SMS[Vonage].Send(to, body, key)
+      rescue ask Notification(notification_id).MarkFailed("Vonage failed; all providers exhausted", now);
+             emit NotificationFailed { notification: notification_id, channel: SMS, attempts: notification.attempts + 1, at: now };
+             reject AllProvidersFailed
+
+  ask Notification(notification_id).MarkSent(send_result.provider, send_result, now)
+  emit NotificationSent { notification: notification_id, channel: SMS, provider: send_result.provider, at: now }
+  commit { notification: notification_id, provider: send_result.provider, message: send_result }
+}
+
+// ---------------------------------------------------------------------------
+// Flows: fan-out handlers
+//
+// Each OnXxx flow is invoked by NotificationWorker's subscribe blocks above.
+// rescue commit arms are best-effort: if all providers fail, NotificationFailed
+// is already emitted inside SendEmail/SendSMS; the outer flow still commits so
+// the subscriber pipeline is not stuck.
+// ---------------------------------------------------------------------------
+
+flow OnUserSignedUp(user: Id, email: Email, at: Timestamp) -> unit {
+  intent: "Send a welcome email when a user signs up. Best-effort: failure is logged via NotificationFailed."
+
+  step _ = ask SendEmail(email, "welcome", "UserSignedUp", user, at, generate())
+           rescue commit
+  commit
+}
+
+flow OnOrderShipped(
+  order:            Id,
+  recipient:        Id,
+  recipient_email:  Email,
+  recipient_phone:  Phone?,
+  tracking:         string,
+  at:               Timestamp,
+) -> unit {
+  intent: """
+    Fan-out: send both an email and an SMS (if phone is present) when an order
+    ships. The two dispatches are independent — email failure does not block SMS.
+  """
+
+  step _ = ask SendEmail(recipient_email, "order-shipped", "OrderShipped", order, at, generate())
+           rescue commit
+
+  step _ = if recipient_phone?
+           then ask SendSMS(recipient_phone, "order-shipped-sms", "OrderShipped", order, at, generate())
+                rescue commit
+
+  commit
+}
+
+flow OnBookingConfirmed(booking: Id, guest: Id, guest_email: Email, at: Timestamp) -> unit {
+  intent: "Send a booking confirmation email. Email-only channel for this event."
+
+  step _ = ask SendEmail(guest_email, "booking-confirmed", "BookingConfirmed", booking, at, generate())
+           rescue commit
+  commit
+}
+
+flow OnPasswordReset(user: Id, email: Email, token: string, at: Timestamp) -> unit {
+  intent: """
+    Send a password reset email. Uses a strict-delivery source event so this
+    subscriber is also strictly delivered. Best-effort at the provider level
+    still applies; the user can request another reset if needed.
+  """
+
+  step _ = ask SendEmail(email, "password-reset", "PasswordReset", user, at, generate())
+           rescue commit
+  commit
+}
+
+// ---------------------------------------------------------------------------
+// Controller: admin inspection
+//
+// Notifications are primarily event-driven. These two admin routes support
+// ops inspection of delivery state — no trigger, no replay, read-only.
+// ---------------------------------------------------------------------------
+
+controller Notifications {
+  policies: [AdminGated]
+
+  GET /admin/notifications/:id -> Notification(id) {
+    auth: bearer
+    map:
+      ok(n)          -> 200 n
+      err(NotFound)  -> 404 { error: "notification_not_found" }
+  }
+
+  GET /admin/notifications -> Notification.where(status == query.status) {
+    auth: bearer
+    map:
+      ok(results) -> 200 results
+  }
+}
