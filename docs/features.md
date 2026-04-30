@@ -27,13 +27,13 @@ Every feature is a directory. Each concern lives in its own file.
 
 ```
 earbnb/spec/booking/
-  prose.cndy         ← intent, exports, uses, policies (read first)
-  types.cndy         ← feature-local types
-  actors.cndy        ← Booking actor, etc.
-  policies.cndy      ← CancellationPolicy, etc.
-  flows.cndy         ← PlaceBooking, CancelBooking
-  events.cndy        ← BookingPlaced, BookingCancelled
-  controllers.cndy   ← Bookings HTTP routes (read last)
+  prose.candy         ← intent, exports, uses, policies (read first)
+  types.candy         ← feature-local types
+  actors.candy        ← Booking actor, etc.
+  policies.candy      ← CancellationPolicy, etc.
+  flows.candy         ← PlaceBooking, CancelBooking
+  events.candy        ← BookingPlaced, BookingCancelled
+  controllers.candy   ← Bookings HTTP routes (read last)
 ```
 
 Use when the feature is large enough that splitting helps navigation —
@@ -44,7 +44,7 @@ typically when a single file would exceed ~250 lines.
 Like Prisma's `schema.prisma`: one file holds the whole slice.
 
 ```
-earbnb/spec/auth.cndy
+earbnb/spec/auth.candy
 ```
 
 ```candy
@@ -83,18 +83,18 @@ No config required. The toolchain detects layout from filesystem:
 
 | Filesystem state                  | Layout                |
 |-----------------------------------|-----------------------|
-| `spec/<name>/prose.cndy` exists   | Folder feature        |
-| `spec/<name>.cndy` exists         | Single-file feature   |
+| `spec/<name>/prose.candy` exists   | Folder feature        |
+| `spec/<name>.candy` exists         | Single-file feature   |
 | Both exist                        | Error (ambiguous)     |
 | Neither exists                    | Not a feature         |
 
-Feature name = directory name (folder) or filename without `.cndy`
+Feature name = directory name (folder) or filename without `.candy`
 (single-file).
 
 ## prose block
 
-Same shape in either layout — top of `prose.cndy` (folder) or top of
-`<name>.cndy` (single-file).
+Same shape in either layout — top of `prose.candy` (folder) or top of
+`<name>.candy` (single-file).
 
 ```candy
 prose {
@@ -154,12 +154,12 @@ Rule of thumb (guidance, not enforcement):
 
 Layout can change. A single-file feature converts into a folder feature
 mechanically: extract each block into the matching sibling file, leave
-the `prose` block in `prose.cndy`.
+the `prose` block in `prose.candy`.
 
 ## Reading order within a feature
 
 ```
-prose.cndy / prose block   ← read first
+prose.candy / prose block   ← read first
 types
 actors
 policies
@@ -173,10 +173,10 @@ a parser resolves forward references without preprocessing.
 
 ## Examples in this repo
 
-- `examples/auth.cndy` — single-file feature (tutorial scale; no `prose`
+- `examples/auth.candy` — single-file feature (tutorial scale; no `prose`
   block since the example predates this design — the earbnb auth feature
   shows the production form).
-- `earbnb/spec/auth.cndy` — single-file production feature with `prose`
+- `earbnb/spec/auth.candy` — single-file production feature with `prose`
   block.
 - `earbnb/spec/booking/` — folder-format feature. Multi-actor saga,
   cross-feature dependencies, external SDK use.

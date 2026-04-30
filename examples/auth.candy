@@ -1,4 +1,4 @@
-// auth.cndy — signup and login.
+// auth.candy — signup and login.
 //
 // Demonstrates: cross-actor flow, password policy, session lifecycle,
 // idempotency, time-bound entities, error variants, prose-as-spec.

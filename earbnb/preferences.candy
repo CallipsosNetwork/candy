@@ -1,4 +1,4 @@
-// preferences.cndy — per-target library and idiom preferences for earbnb.
+// preferences.candy — per-target library and idiom preferences for earbnb.
 // AI codegen consumes these as hints, not requirements.
 
 target go {

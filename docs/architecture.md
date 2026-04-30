@@ -8,28 +8,25 @@ dependencies point one direction; policies cross-cut as needed.
 An inbound request enters at the top, descends through layers, may invoke
 external services, and returns:
 
-```
-              HTTP / CLI / queue inbound
-                         ↓
-                  ┌──────────────┐
-                  │  Controller  │ ← policies (auth, rate, audit)
-                  └──────────────┘
-                         ↓
-                  ┌──────────────┐
-                  │     Flow     │ ← policies (atomicity, audit)
-                  └──────────────┘
-                  ↓             ↓
-           ┌─────────────┐ ┌──────────────────┐
-           │   Actor     │ │ external Actor   │
-           │ (state we   │ │  (SDK adapter —  │
-           │   own)      │ │   Stripe, Email) │
-           └─────────────┘ └──────────────────┘
-                  ↓                  ↑
-           DB substrate         Real SDK call
-           (preferences.cndy)   (preferences.cndy)
+```mermaid
+flowchart TD
+    Inbound["HTTP / CLI / queue inbound"]
+    Controller["Controller"]
+    Flow["Flow"]
+    Actor["Actor<br/>(state we own)"]
+    External["external Actor<br/>(SDK adapter — Stripe, Email)"]
+    DB[("DB substrate<br/>(preferences.candy)")]
+    SDK[/"Real SDK call<br/>(preferences.candy)"/]
 
-           Events ↑↓ Subscribers (cross-feature glue)
-           Policies ⇒ attach at type / actor / flow / controller
+    Inbound --> Controller
+    Controller -- "policies: auth, rate, audit" --> Flow
+    Flow -- "policies: atomicity, audit" --> Actor
+    Flow --> External
+    Actor --> DB
+    External --> SDK
+
+    Events>"Events ⇅ Subscribers<br/>(cross-feature glue)"]
+    Policies>"Policies ⇒ attach at<br/>type / actor / flow / controller"]
 ```
 
 ## Dependency direction
@@ -115,7 +112,7 @@ place it is enforced**. The dependency graph is visible from the source.
 Two kinds of "thing we don't own":
 
 **Substrate** — Postgres, Redis, BullMQ, S3. Universal infrastructure for
-persistence, queueing, caching, storage. **Lives in `preferences.cndy`,
+persistence, queueing, caching, storage. **Lives in `preferences.candy`,
 never in `spec/`.** An actor with `state {}` is implicitly persisted; we
 don't write `ask Postgres.Insert(...)`. Codegen wires the substrate per
 target.
@@ -149,16 +146,16 @@ Two views of the same project, both legitimate:
 **For humans (top-down, intent-first):**
 
 ```
-candy.toml → preferences.cndy
-  → spec/types.cndy, events.cndy, invariants.cndy, externals.cndy
+candy.toml → preferences.candy
+  → spec/types.candy, events.candy, invariants.candy, externals.candy
     → for each feature/:
-        prose.cndy        ← read first; intent, exports, uses
-        types.cndy        ← feature-local types
-        actors.cndy
-        policies.cndy
-        flows.cndy
-        events.cndy
-        controllers.cndy  ← entry points; read last
+        prose.candy        ← read first; intent, exports, uses
+        types.candy        ← feature-local types
+        actors.candy
+        policies.candy
+        flows.candy
+        events.candy
+        controllers.candy  ← entry points; read last
   → conformance/
 ```
 
@@ -169,14 +166,14 @@ types → events → externals → actors → policies → flows → controllers
 ```
 
 Files on disk follow dependency order so a parser resolves forward
-references easily. `prose.cndy` is the human entry point per feature —
+references easily. `prose.candy` is the human entry point per feature —
 like a README per slice.
 
 ## Designing a new feature
 
 The order matters. Intent first, implementation last:
 
-1. Write `prose.cndy` intent. What + why. One paragraph.
+1. Write `prose.candy` intent. What + why. One paragraph.
 2. List external dependencies in `uses:`. Forces the dependency story upfront.
 3. Decide the public API in `exports:`.
 4. Sketch types this feature owns.

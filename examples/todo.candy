@@ -1,4 +1,4 @@
-// todo.cndy — a per-user todo list.
+// todo.candy — a per-user todo list.
 //
 // Demonstrates: stateful actor, list state, derive, multiple messages,
 // events, controller with several routes, error variants.

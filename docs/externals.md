@@ -110,7 +110,7 @@ shapes. The contract has domain semantics.
 
 **Substrate** when the dependency is universal infrastructure with
 idiomatic per-language libraries: Postgres, Redis, BullMQ, S3. Lives in
-`preferences.cndy`. Never in `spec/`.
+`preferences.candy`. Never in `spec/`.
 
 The dividing line: substrate has no domain semantics; external actors
 do.
@@ -119,19 +119,19 @@ do.
 
 In a project, external actors typically live in:
 
-- **`spec/externals.cndy`** — shared declarations for SDKs used by
+- **`spec/externals.candy`** — shared declarations for SDKs used by
   multiple features (`Payments`, `Email`, `Analytics`).
-- **`spec/<feature>/externals.cndy`** — feature-specific externals (rare).
+- **`spec/<feature>/externals.candy`** — feature-specific externals (rare).
 
 Other features `use external Payments for Charge, Refund` in their
-`prose.cndy`.
+`prose.candy`.
 
 ## Codegen responsibilities
 
 When AI generates code from an external actor declaration, it produces:
 
 - An SDK client wrapper using the target's idiomatic library (per
-  `preferences.cndy` — e.g., `stripe-python` for Python, `stripe-go`
+  `preferences.candy` — e.g., `stripe-python` for Python, `stripe-go`
   for Go).
 - Auth wiring from `config:` (env vars, secret managers).
 - Idempotency-key threading on every call.

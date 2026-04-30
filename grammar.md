@@ -9,7 +9,7 @@ TypeScript, or Python.
 The language is small (~48 single-word keywords), prose-heavy where prose
 serves it, rigorous where ambiguity costs.
 
-Files use the `.cndy` extension. The language is "candy".
+Files use the `.candy` extension. The language is "candy".
 
 ---
 
@@ -74,7 +74,7 @@ holds the why) but lives once in the table under ENTITY.
 | `type`       | A record, or a branded primitive with pinned semantics.  |
 | `enum`       | A sum (variant) type.                                    |
 | `invariant`  | A truth that must hold (actor-local or system-wide).     |
-| `target`     | Per-target library and idiom preferences (preferences.cndy). |
+| `target`     | Per-target library and idiom preferences (preferences.candy). |
 
 ---
 
@@ -264,7 +264,7 @@ conformance tests.
 
 ## target
 
-Per-target library and idiom preferences. Lives in `preferences.cndy` at the
+Per-target library and idiom preferences. Lives in `preferences.candy` at the
 project root. AI codegen consumes these as hints, not requirements.
 
 ```candy
@@ -325,27 +325,27 @@ Lists support `where <predicate>`, `+` (append), `[id]` (index by id field).
 
 ## Project layout
 
-A candy project has a `candy.toml` manifest at the root and `.cndy` files
+A candy project has a `candy.toml` manifest at the root and `.candy` files
 beneath. Declarations resolve across files; there is no import statement.
-Per-target library preferences live in `preferences.cndy` at the project
+Per-target library preferences live in `preferences.candy` at the project
 root. Convention for non-trivial projects:
 
 ```
 project/
   candy.toml                // manifest: project, targets, deps
-  preferences.cndy          // per-target library and idiom preferences
+  preferences.candy          // per-target library and idiom preferences
   spec/
-    types.cndy              // shared types and enums
-    events.cndy             // shared event declarations
-    invariants.cndy         // system-level invariants
+    types.candy              // shared types and enums
+    events.candy             // shared event declarations
+    invariants.candy         // system-level invariants
     <feature>/
-      actors.cndy           // actors for this feature
-      flows.cndy            // flows for this feature
-      controllers.cndy      // HTTP surface for this feature
-      policies.cndy         // rule clusters for this feature
+      actors.candy           // actors for this feature
+      flows.candy            // flows for this feature
+      controllers.candy      // HTTP surface for this feature
+      policies.candy         // rule clusters for this feature
   conformance/<feature>.hurl
   targets/<lang>/           // generated code (output)
 ```
 
-Small projects flatten to a single `.cndy` file. The `examples/` directory
+Small projects flatten to a single `.candy` file. The `examples/` directory
 in this repository contains tutorial-scale specs; `earbnb/` is a full project.
