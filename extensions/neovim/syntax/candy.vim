@@ -25,7 +25,7 @@ syn keyword candyBoolean true false
 hi def link candyBoolean Boolean
 
 " Word-axis: ENTITY (things that exist)
-syn keyword candyEntity actor state enum type derive journal audit self id
+syn keyword candyEntity actor state config providers enum type derive journal audit self id
 syn keyword candyEntity flow controller event policy target prose external invariant
 hi def link candyEntity Structure
 
@@ -51,7 +51,7 @@ syn keyword candyPrimitive int string opaque bool bytes instant decimal unit
 hi def link candyPrimitive Type
 
 " Built-in functions
-syn keyword candyBuiltin generate hash verify sum length last
+syn keyword candyBuiltin generate hash verify sum length last secret
 hi def link candyBuiltin Function
 
 " HTTP methods used in controller blocks

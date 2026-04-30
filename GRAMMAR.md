@@ -6,7 +6,7 @@ that expose flows over HTTP**, **policies that capture rules**, and **events
 that propagate**. From one spec, AI generates idiomatic backends in Go, Rust,
 TypeScript, or Python.
 
-The language is small (~48 single-word keywords), prose-heavy where prose
+The language is small (~50 single-word keywords), prose-heavy where prose
 serves it, rigorous where ambiguity costs.
 
 Files use the `.candy` extension. The language is "candy".
@@ -20,11 +20,13 @@ words in each, and you can read any candy file.
 
 ```
 ENTITY      things that exist
-            actor  state  enum  type  derive  journal  audit  self  id
-            flow  controller  event  policy  target
+            actor  external  state  config  providers  enum  type
+            derive  journal  audit  self  id
+            flow  controller  event  policy  target  prose
 
 ACTION      things that happen
-            ask  tell  emit  effect  commit  compensate  reject  step  accepts  subscribe  use
+            ask  tell  emit  emits  effect  commit  compensate  reject
+            step  accepts  subscribe  use  uses  exports
 
 TIME        when, in what order, for how long
             now  then  after  before  until  expire  schedule  at  rescue
@@ -64,17 +66,19 @@ holds the why) but lives once in the table under ENTITY.
 
 ## Block types at a glance
 
-| Block        | Purpose                                                  |
-|--------------|----------------------------------------------------------|
-| `actor`      | A stateful entity with identity, state, and messages.    |
-| `flow`       | A multi-actor saga with explicit compensation.           |
-| `controller` | HTTP surface — routes, auth, request/response shape.     |
-| `policy`     | A rule cluster expressed in prose with examples.         |
-| `event`      | A typed message broadcast to subscribers.                |
-| `type`       | A record, or a branded primitive with pinned semantics.  |
-| `enum`       | A sum (variant) type.                                    |
-| `invariant`  | A truth that must hold (actor-local or system-wide).     |
-| `target`     | Per-target library and idiom preferences (preferences.candy). |
+| Block             | Purpose                                                  |
+|-------------------|----------------------------------------------------------|
+| `actor`           | A stateful entity with identity, state, and messages.    |
+| `external actor`  | An SDK adapter — same shape as actor, no `state`.        |
+| `flow`            | A multi-actor saga with explicit compensation.           |
+| `controller`      | HTTP surface — routes, auth, request/response shape.     |
+| `policy`          | A rule cluster expressed in prose with examples.         |
+| `event`           | A typed message broadcast to subscribers.                |
+| `type`            | A record, or a branded primitive with pinned semantics.  |
+| `enum`            | A sum (variant) type.                                    |
+| `invariant`       | A truth that must hold (actor-local or system-wide).     |
+| `prose`           | Feature interface — intent, exports, uses, policies.     |
+| `target`          | Per-target library and idiom preferences (preferences.candy). |
 
 ---
 
@@ -112,6 +116,147 @@ Every actor type has these implicit messages, no declaration needed:
 - `Type(id)` — address an existing instance by id.
 
 Inside an actor, `self` refers to the current instance.
+
+---
+
+## external actor
+
+Same syntax as `actor`, with one modifier that flips ownership: we don't own
+the SDK's state. Used for third-party services with explicit messages —
+Stripe, SendGrid, Twilio, OpenAI.
+
+External actors have no `state {}` block. They have:
+
+- **`config:`** — credentials, endpoints, options. References env vars via
+  `secret "ENV_NAME"`.
+- **`accepts`** — outbound calls into the SDK. Each declares input, output,
+  and explicit error variants.
+- **`emits`** — inbound events (typically webhooks). Subscribers handle
+  them just like internal events.
+
+```candy
+external actor Payments {
+  intent: "Payment provider — charges, refunds, intents."
+
+  config:
+    api_key:        secret "PAYMENTS_KEY"
+    webhook_secret: secret "PAYMENTS_WEBHOOK_SECRET"
+
+  accepts Charge(amount: Money, source: PaymentMethod, key: Key)
+    -> Result<ChargeId, PaymentDeclined | NetworkError | RateLimited>
+
+  accepts Refund(charge: ChargeId, amount: Money?)
+    -> Result<RefundId, RefundError | NetworkError>
+
+  emits ChargeSucceeded { charge: ChargeId, at: Timestamp }
+  emits ChargeFailed    { charge: ChargeId, reason: string, at: Timestamp }
+}
+```
+
+### Calling — sync return
+
+A flow uses `ask` to invoke and await the response. The return type is the
+`Ok` of the declared `Result`.
+
+```candy
+flow PlaceBooking(amount: Money, source: PaymentMethod, key: Key) -> ... {
+  step paid = ask Payments.Charge(amount, source, key)
+              rescue reject PaymentDeclined          // paid: ChargeId
+  ...
+}
+```
+
+`tell` is the fire-and-forget variant — returns unit, doesn't await:
+
+```candy
+flow LogAnalytics(event: AnalyticsEvent) -> unit {
+  tell Analytics.Track(event)
+  commit
+}
+```
+
+### Webhook return — async via subscribe
+
+When the SDK confirms asynchronously (e.g. Stripe's `charge.succeeded`
+webhook), the external `emits` an event and subscribers react:
+
+```candy
+actor Booking(id: Id) {
+  ...
+  subscribe ChargeSucceeded -> ConfirmBooking(charge)
+  subscribe ChargeFailed    -> RevertHold(reason)
+}
+```
+
+The subscriber doesn't know which provider fired the event; the contract is
+the event shape on the external actor.
+
+### Single provider, swappable
+
+When you'll only ever use one provider but want to swap by editing one
+line, keep the external actor abstract. The contract is universal; the
+concrete SDK is chosen per target via `preferences.candy`:
+
+```candy
+// preferences.candy
+target go         { when need payments use stripe-go }
+target rust       { when need payments use polar-rust }
+target typescript { when need payments use lemonsqueezy-node }
+```
+
+Switching providers is a one-line preference edit; no spec change. Codegen
+maps each provider's native webhook shapes onto the declared `emits`.
+
+### Multiple providers
+
+When you need more than one provider live at the same time — fallback
+chains, per-user routing, per-region selection — declare them explicitly
+via `providers:` and select at the call site with `Actor[Tag]`:
+
+```candy
+external actor Payments {
+  providers: [Stripe, Polar, Lemon]
+
+  config Stripe: api_key: secret "STRIPE_KEY"
+  config Polar:  api_key: secret "POLAR_KEY"
+  config Lemon:  api_key: secret "LEMONSQUEEZY_KEY"
+
+  accepts Charge(amount: Money, source: PaymentMethod, key: Key)
+    -> Result<ChargeId, PaymentDeclined | NetworkError | RateLimited>
+
+  emits ChargeSucceeded { charge: ChargeId, at: Timestamp }
+  emits ChargeFailed    { charge: ChargeId, reason: string, at: Timestamp }
+}
+```
+
+Selection at the call site uses `Actor[Tag]`, parallel to `Actor(id)` for
+internal actors:
+
+```candy
+flow ChargeWithFallback(amount: Money, source: PaymentMethod, key: Key)
+  -> Result<ChargeId, AllProvidersFailed>
+{
+  step paid = ask Payments[Stripe].Charge(amount, source, key)
+              rescue ask Payments[Polar].Charge(amount, source, key)
+              rescue ask Payments[Lemon].Charge(amount, source, key)
+              rescue reject AllProvidersFailed
+  commit paid
+}
+```
+
+Each provider tag becomes a separate library binding in `preferences.candy`
+(lowercased provider name = preferences key):
+
+```candy
+target go {
+  when need stripe use stripe-go
+  when need polar  use polar-go
+  when need lemon  use lemonsqueezy-go
+}
+```
+
+Codegen reads `providers:` from the spec, then looks each tag up in
+preferences.
 
 ---
 
@@ -188,6 +333,90 @@ policy Name {
       then:  err(<Variant>)
 }
 ```
+
+---
+
+## prose
+
+A feature's interface block. Declares what the slice does, what it exports,
+what it depends on, and which policies it carries. Lives at the top of a
+single-file feature or in `prose.candy` of a folder feature. Reading the
+`prose` block tells a developer everything they need before reading the
+implementation.
+
+```candy
+prose {
+  intent: """
+    Account signup, login, logout. Issues sessions; verifies credentials.
+  """
+
+  exports:
+    actor User, Session
+    flow  Signup, Login, Logout
+    type  Email, Password
+    event UserSignedUp, UserVerified
+
+  uses:
+    feature  Wallet   for Topup, Debit
+    external Payments for Charge, Refund
+
+  policies: [BearerAuth, RateLimit]
+}
+```
+
+Fields:
+
+- **`intent:`** — what + why. Conventionally always present.
+- **`exports:`** — public API. Anything not exported is private; codegen
+  refuses cross-feature references to private items.
+- **`uses:`** — cross-feature and external dependencies, with the specific
+  operations each consumer relies on. Makes the dependency graph grep-able.
+- **`policies:`** — feature-scoped policies that apply to every controller
+  and flow inside the feature.
+
+All four sections are optional; `intent:` is conventionally always present.
+
+---
+
+## Policy attachment
+
+A `policy` block defines a rule. The `policies:` field declares *where* the
+rule is enforced. Five valid attachment points, increasing in scope:
+
+| Scope        | Where `policies:` appears                                                |
+|--------------|--------------------------------------------------------------------------|
+| Type         | Inside a `type` block. Every value of the type satisfies the policy at construction. |
+| Actor        | Inside an `actor` block. Wraps every `accepts` on the actor.             |
+| Flow         | Inside a `flow` block. Governs the whole saga.                           |
+| Controller   | Inside a `controller` block (and per-route). Runs before route dispatch. |
+| Feature      | Inside a `prose` block. Applies to every controller and flow in the feature. |
+
+```candy
+type Password string {
+  policies: [PasswordStrength]                   // type-scope
+}
+
+actor User(id: Id) {
+  policies: [AuditLog]                           // actor-scope
+  ...
+}
+
+flow PlaceBooking(...) -> ... {
+  policies: [TransactionalAtomicity, RateLimit]  // flow-scope
+  ...
+}
+
+controller Bookings {
+  policies: [BearerAuth]                         // controller-scope
+  POST /bookings -> PlaceBooking(...) {
+    policies: [AntiSpam]                         // route-scope
+    ...
+  }
+}
+```
+
+Explicit attachment makes the policy graph grep-able: every enforcement
+point is visible in source, with no implicit coupling.
 
 ---
 
@@ -348,4 +577,26 @@ project/
 ```
 
 Small projects flatten to a single `.candy` file. The `examples/` directory
-in this repository contains tutorial-scale specs; `earbnb/` is a full project.
+in this repository contains tutorial-scale specs; `examples/airbnb/` is a
+full project.
+
+## Feature layout detection
+
+Each feature picks its layout independently. The toolchain detects which by
+filesystem alone — no config required:
+
+| Filesystem state                  | Layout                |
+|-----------------------------------|-----------------------|
+| `spec/<name>/prose.candy` exists  | Folder feature        |
+| `spec/<name>.candy` exists        | Single-file feature   |
+| Both exist                        | Error (ambiguous)     |
+| Neither exists                    | Not a feature         |
+
+The feature name is the directory name (folder layout) or the filename
+without `.candy` (single-file). The `prose` block is the entry point in
+either case — top of `<name>.candy` for single-file, contents of
+`prose.candy` for folder.
+
+Convert single-file → folder mechanically: extract each block into the
+matching sibling file (`actors.candy`, `flows.candy`, etc.), leave the
+`prose` block in `prose.candy`.
