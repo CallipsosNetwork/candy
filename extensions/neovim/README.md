@@ -8,41 +8,55 @@ dedicated groups, and PascalCase identifiers fall through to `Type`.
 
 ## Install
 
-### lazy.nvim
+### lazy.nvim / LazyVim (recommended)
 
-Local checkout:
+1. Clone the candy repo somewhere stable, e.g. `~/code/candy`:
+
+   ```sh
+   git clone https://github.com/CallipsosNetwork/candy.git ~/code/candy
+   ```
+
+2. Create `~/.config/nvim/lua/plugins/candy.lua` with:
+
+   ```lua
+   return {
+     dir = vim.fn.expand("~/code/candy/extensions/neovim"),
+     name = "candy.nvim",
+     ft = "candy",
+   }
+   ```
+
+3. Restart Neovim. lazy.nvim picks the spec up automatically; the plugin loads when you first open a `.candy` buffer.
+
+4. Verify with `nvim examples/hello.candy` (from the candy repo). Inside Neovim:
+
+   ```
+   :echo &filetype          " → candy
+   :echo b:current_syntax   " → candy
+   :highlight candyEntity   " → links to Structure
+   ```
+
+   If any of those are empty, run `:Lazy reload candy.nvim` and reopen the file.
+
+> **Note for LazyVim users:** lazy.nvim resets `runtimepath`, so dropping the
+> plugin into `~/.config/nvim/pack/*/start/` does **not** work — it gets
+> stripped. Use the spec above.
+
+### Other plugin managers
+
+**packer.nvim** (after publishing the repo):
 
 ```lua
-{ dir = "/path/to/candy/extensions/neovim", ft = "candy" }
+use { 'CallipsosNetwork/candy', rtp = 'extensions/neovim', ft = 'candy' }
 ```
 
-From a remote repo (replace `yourorg/candy` with the real slug):
-
-```lua
-{
-  "yourorg/candy",
-  ft = "candy",
-  config = function()
-    vim.opt.runtimepath:append(vim.fn.stdpath("data") .. "/lazy/candy/extensions/neovim")
-  end,
-}
-```
-
-### packer.nvim
-
-```lua
-use { 'yourorg/candy', rtp = 'extensions/neovim', ft = 'candy' }
-```
-
-### vim-plug
+**vim-plug**:
 
 ```vim
-Plug 'yourorg/candy', { 'rtp': 'extensions/neovim', 'for': 'candy' }
+Plug 'CallipsosNetwork/candy', { 'rtp': 'extensions/neovim', 'for': 'candy' }
 ```
 
-### Plain runtimepath (hacking locally)
-
-Copy or symlink the contents of `extensions/neovim/` into `~/.config/nvim/`:
+**Plain Neovim, no plugin manager**:
 
 ```sh
 ln -s "$PWD/extensions/neovim/ftdetect/candy.vim" ~/.config/nvim/ftdetect/candy.vim
