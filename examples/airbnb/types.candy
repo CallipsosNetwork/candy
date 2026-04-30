@@ -1,0 +1,26 @@
+// types.candy — shared types and enums for the airbnb example.
+//
+// All cross-feature type names are defined here. Feature files reference
+// these by name; no import is needed (declarations resolve across files).
+
+type Id           opaque  { max: 64 }
+type Timestamp    instant { tz: utc }
+type Date         instant { tz: utc, precision: day }
+type DateRange    { from: Date, to: Date }
+type Email        string  { max: 320, format: rfc5322 }
+type Password     string  { policies: [PasswordStrength] }
+type PasswordHash opaque
+type Token        opaque  { max: 256 }
+type Key          opaque  { max: 128 }
+type Money        int     { unit: minor, currency: USD, round: nearest }
+type CouponCode   string  { max: 32 }
+
+type PaymentMethod opaque { max: 256 }
+type ChargeId      opaque { max: 128 }
+type RefundId      opaque { max: 128 }
+type TransferId    opaque { max: 128 }
+
+enum Role          { Guest, Host, Admin }
+enum BookingStatus { Pending, Confirmed, Cancelled, Completed }
+enum ListingStatus { Draft, Listed, Hidden }
+enum CouponKind    { Percent, FixedAmount }
