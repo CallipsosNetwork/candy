@@ -1,8 +1,9 @@
 # Features
 
 A feature is a coherent slice of the system — actors, flows, controllers,
-policies, events that belong together. earbnb has five: auth, listings,
-wallet, booking, coupons.
+policies, events that belong together. The airbnb example has four:
+auth, listings, booking, coupons. (Wallet lives as its own standalone
+example.)
 
 ## What a feature contains
 
@@ -26,7 +27,7 @@ Both supported. Pick per feature.
 Every feature is a directory. Each concern lives in its own file.
 
 ```
-earbnb/spec/booking/
+myproject/spec/booking/
   prose.candy         ← intent, exports, uses, policies (read first)
   types.candy         ← feature-local types
   actors.candy        ← Booking actor, etc.
@@ -44,7 +45,7 @@ typically when a single file would exceed ~250 lines.
 Like Prisma's `schema.prisma`: one file holds the whole slice.
 
 ```
-earbnb/spec/auth.candy
+examples/airbnb/auth.candy
 ```
 
 ```candy
@@ -174,9 +175,9 @@ a parser resolves forward references without preprocessing.
 ## Examples in this repo
 
 - `examples/auth.candy` — single-file feature (tutorial scale; no `prose`
-  block since the example predates this design — the earbnb auth feature
+  block since the example predates this design — the airbnb auth feature
   shows the production form).
-- `earbnb/spec/auth.candy` — single-file production feature with `prose`
-  block.
-- `earbnb/spec/booking/` — folder-format feature. Multi-actor saga,
-  cross-feature dependencies, external SDK use.
+- `examples/airbnb/auth.candy` — single-file production feature with
+  `prose` block.
+- `examples/airbnb/booking.candy` — multi-actor saga with cross-feature
+  dependencies and external SDK use.
