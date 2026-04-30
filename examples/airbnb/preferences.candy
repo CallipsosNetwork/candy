@@ -1,4 +1,4 @@
-// preferences.candy — per-target library and idiom preferences for earbnb.
+// preferences.candy — per-target library and idiom preferences for airbnb.
 // AI codegen consumes these as hints, not requirements.
 
 target go {
