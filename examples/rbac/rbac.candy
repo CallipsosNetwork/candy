@@ -1,24 +1,24 @@
-// rbac.candy — TODO: implement per README.md scope.
+// rbac.candy — role-based access control via a swappable external library.
 //
-// Role-based access control delegated to an external library.
-// Demonstrates abstract external actor with multiple providers
-// (Casbin, Oso, Casl), Actor[Tag] selection at call sites, and
-// controller-scoped policy attachment for role-gated routes.
+// Demonstrates: external actor with providers: [Casbin, Oso, Casl], Actor[Tag]
+// selection at call sites, RoleGated policy attached at route scope, and audit
+// on the User actor for every grant and revoke.
 
 prose {
   intent: """
     Role-based access control over Resources, owned by Users.
-    Authorization decisions are delegated to a swappable external
-    RBAC library — Casbin, Oso, or Casl — selected per call via
-    Actor[Tag]. The candy spec owns the role/permission model and
-    the audit story; the library owns the policy evaluation.
+    Authorization decisions are delegated to a swappable external RBAC
+    library — Casbin, Oso, or Casl — selected per call via Actor[Tag].
+    The candy spec owns the role/permission model and the audit story;
+    the library owns the policy evaluation. Swapping providers is a
+    one-token edit at each call site; the RBAC actor contract is invariant.
   """
 
   exports:
     actor User, Resource
     flow  Grant, Revoke, Check, CreateResource
-    type  Role, Permission, ResourceId
-    event RoleGranted, RoleRevoked, AccessChecked
+    type  Role, Action, ResourceKind, AuditEntry
+    event RoleGranted, RoleRevoked, AccessChecked, ResourceCreated
 
   uses:
     external RBAC for Enforce, AddPolicy, RemovePolicy
@@ -26,15 +26,369 @@ prose {
   policies: [RoleGated]
 }
 
-// TODO: types — Id, Timestamp, Key, Role enum, Permission enum, ResourceId.
-// TODO: actor User — id, role assignments, audit of grants/revokes.
-// TODO: actor Resource — id, owner, kind, created.
-// TODO: external actor RBAC with providers: [Casbin, Oso, Casl];
-//       accepts Enforce(subject, action, object), AddPolicy, RemovePolicy.
-// TODO: policy RoleGated — feature-scope; rejects unauthorized callers.
-// TODO: flow Grant(user, role, now, key) — admin grants a role to a user.
-// TODO: flow Revoke(user, role, now, key) — admin revokes a role.
-// TODO: flow Check(subject, action, resource) -> Result<Allowed, Denied>.
-// TODO: flow CreateResource(owner, kind, now, key).
-// TODO: events RoleGranted, RoleRevoked, AccessChecked.
-// TODO: controller RBAC with role-gated routes (admin-only Grant/Revoke).
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type Id         opaque  { max: 64 }
+type ResourceId opaque  { max: 64 }
+type Timestamp  instant { tz: utc }
+type Key        opaque  { max: 128 }
+
+enum Role {
+  // Rank: Viewer < Editor < Admin. RoleGated enforces this ordering.
+  Viewer, Editor, Admin
+}
+
+enum Action {
+  Read, Write, Delete, Share
+}
+
+enum ResourceKind {
+  Document, Project, Comment
+}
+
+// Record appended to User.grants on every grant and every revoke.
+type AuditEntry {
+  subject:   Id         // user whose role changed
+  role:      Role
+  actor:     Id         // who performed the change
+  operation: string     // "grant" or "revoke"
+  at:        Timestamp
+}
+
+// Success sentinel for Check — carries the allow decision as a typed value.
+type Allowed { subject: Id, action: Action, resource: ResourceId, at: Timestamp }
+type Denied  { subject: Id, action: Action, resource: ResourceId, at: Timestamp }
+
+// Typed error for RBAC external calls.
+type RBACError { code: string, message: string }
+
+// ─── Actors ───────────────────────────────────────────────────────────────────
+
+actor User(id: Id) {
+  state {
+    name:    string
+    role:    Role      = Viewer
+    created: Timestamp
+  }
+
+  // Append-only audit of every role change on this user.
+  audit grants {
+    entry: AuditEntry
+  }
+
+  // A user holds each role exactly once — role is a scalar, not a set.
+  // This invariant captures that we never have a role stored as stale data.
+  invariant "role reflects the most recently applied grant or revoke"
+
+  accepts AssignRole(to: Role, by: Id, now: Timestamp)
+    -> Result<unit, AlreadyGranted>
+  {
+    intent: """
+      Set the user's role to 'to'. Rejects if the user already holds that
+      role — callers should check before calling. Appends a grant entry to
+      the audit log.
+    """
+    require: role != to  rescue reject AlreadyGranted
+    effect:  role = to
+    effect:  grants = grants + [{ subject: self.id, role: to, actor: by, operation: "grant", at: now }]
+    commit
+  }
+
+  accepts RevokeRole(from: Role, by: Id, now: Timestamp)
+    -> Result<unit, NotGranted>
+  {
+    intent: """
+      Reset the user's role to Viewer (the baseline). Rejects if the user
+      does not currently hold the specified role. Appends a revoke entry to
+      the audit log.
+    """
+    require: role == from  rescue reject NotGranted
+    effect:  role = Viewer
+    effect:  grants = grants + [{ subject: self.id, role: from, actor: by, operation: "revoke", at: now }]
+    commit
+  }
+}
+
+actor Resource(id: ResourceId) {
+  state {
+    kind:    ResourceKind
+    owner:   Id            // User.id — set at creation, never changes
+    created: Timestamp
+  }
+
+  // Owner is set once and is immutable; no message changes it.
+  invariant "owner is set at creation and never mutated"
+}
+
+// ─── External actor ───────────────────────────────────────────────────────────
+
+external actor RBAC {
+  intent: """
+    Abstract RBAC policy evaluation layer. Three named providers are live
+    simultaneously — Casbin (self-hosted model file), Oso (cloud API), and
+    Casl (JavaScript-only, TypeScript target only). Flows pick a provider
+    via RBAC[Tag] at each call site. Swapping the default is a one-token
+    edit. No emits — RBAC libraries are synchronous decision engines.
+
+    Casl is bound only on the TypeScript target (see preferences.candy).
+    Use RBAC[Casbin] or RBAC[Oso] for portable code paths.
+  """
+
+  providers: [Casbin, Oso, Casl]
+
+  config Casbin: model_path:    secret "CASBIN_MODEL_PATH"
+                 policy_store:  secret "CASBIN_POLICY_STORE"
+
+  config Oso:    api_key:       secret "OSO_KEY"
+                 endpoint:      secret "OSO_ENDPOINT"
+
+  config Casl:   rules_path:    secret "CASL_RULES_PATH"
+
+  // Core authorization decision. Returns true if the subject is allowed
+  // to perform action on the given resource; false otherwise.
+  accepts Enforce(subject: Id, action: Action, object: ResourceId)
+    -> Result<bool, RBACError>
+
+  // Register a role-to-resource policy entry. object is optional — omitting
+  // it registers a global role grant (all resources of every kind).
+  accepts AddPolicy(subject: Id, role: Role, object: ResourceId?)
+    -> Result<unit, RBACError>
+
+  // Remove a previously registered policy entry.
+  accepts RemovePolicy(subject: Id, role: Role, object: ResourceId?)
+    -> Result<unit, RBACError>
+}
+
+// ─── Policy ───────────────────────────────────────────────────────────────────
+
+policy RoleGated {
+  intent: """
+    Compares the session-bound role against a required minimum. Roles rank
+    Viewer < Editor < Admin. A caller whose role is below the required level
+    receives 403 Forbidden; a caller at or above the required level proceeds.
+
+    The required role is a parameter supplied at the attachment site, e.g.
+    RoleGated(Admin) on an admin-only route or RoleGated(Editor) on a
+    write-access route. BearerAuth must run first to bind the session role.
+  """
+  examples:
+    - given: "caller role Viewer, required Admin"
+      then:  err(InsufficientRole)
+
+    - given: "caller role Editor, required Admin"
+      then:  err(InsufficientRole)
+
+    - given: "caller role Editor, required Editor"
+      then:  ok
+
+    - given: "caller role Admin, required Editor"
+      then:  ok
+
+    - given: "caller role Admin, required Admin"
+      then:  ok
+
+    - given: "caller role Viewer, required Viewer"
+      then:  ok
+}
+
+// ─── Events ───────────────────────────────────────────────────────────────────
+
+event RoleGranted {
+  payload: {
+    actor:    Id         // admin who performed the grant
+    target:   Id         // user whose role was granted
+    role:     Role
+    at:       Timestamp
+  }
+  delivery: eager
+  order:    by target
+}
+
+event RoleRevoked {
+  payload: {
+    actor:    Id
+    target:   Id
+    role:     Role
+    at:       Timestamp
+  }
+  delivery: eager
+  order:    by target
+}
+
+event AccessChecked {
+  // High-volume. Subscribers are expected to sample or batch.
+  payload: {
+    subject:  Id
+    action:   Action
+    resource: ResourceId
+    allowed:  bool
+    at:       Timestamp
+  }
+  delivery: eager
+}
+
+event ResourceCreated {
+  payload: {
+    resource: ResourceId
+    owner:    Id
+    kind:     ResourceKind
+    at:       Timestamp
+  }
+  delivery: eager
+  order:    by owner
+}
+
+// ─── Flows ────────────────────────────────────────────────────────────────────
+
+flow Grant(target: Id, role: Role, by: Id, now: Timestamp, key: Key)
+  -> Result<unit, AlreadyGranted | NotAuthorized | UserNotFound>
+{
+  intent: """
+    Admin grants a role to a user. Looks up the target user, assigns the
+    role via the User actor, then calls RBAC[Casbin].AddPolicy to keep the
+    external policy store in sync. Idempotent on key. Emits RoleGranted.
+
+    Use RBAC[Casbin] for cross-target portability; RBAC[Oso] also works.
+    Do not use RBAC[Casl] here — Casl is JS-only (TypeScript target only).
+  """
+
+  step user = ask User.findBy(id: target)
+              rescue reject UserNotFound
+
+  step _    = ask User(target).AssignRole(role, by, now)
+              rescue reject AlreadyGranted
+
+  step _    = ask RBAC[Casbin].AddPolicy(target, role, null)
+              rescue reject NotAuthorized
+
+  emit RoleGranted { actor: by, target, role, at: now }
+  commit
+}
+
+flow Revoke(target: Id, role: Role, by: Id, now: Timestamp, key: Key)
+  -> Result<unit, NotGranted | NotAuthorized | UserNotFound>
+{
+  intent: """
+    Admin revokes a role from a user. Symmetric to Grant — updates the User
+    actor and removes the entry from the external policy store. Idempotent
+    on key. Emits RoleRevoked.
+  """
+
+  step user = ask User.findBy(id: target)
+              rescue reject UserNotFound
+
+  step _    = ask User(target).RevokeRole(role, by, now)
+              rescue reject NotGranted
+
+  step _    = ask RBAC[Casbin].RemovePolicy(target, role, null)
+              rescue reject NotAuthorized
+
+  emit RoleRevoked { actor: by, target, role, at: now }
+  commit
+}
+
+flow Check(subject: Id, action: Action, resource: ResourceId, now: Timestamp)
+  -> Result<Allowed, Denied>
+{
+  intent: """
+    Pure authorization check. Resolves owner-implicit permission first — a
+    resource owner is always allowed to perform any action on their own
+    resource without an explicit policy entry. On a miss, delegates to
+    RBAC[Casbin].Enforce. Emits AccessChecked regardless of outcome.
+
+    Returns ok(Allowed) on success, ok(Denied) when the library says no.
+    Both outcomes are modelled as ok because the flow itself succeeded —
+    the caller pattern-matches on the inner type to decide the HTTP status.
+  """
+
+  step res     = ask Resource.findBy(id: resource)
+                 rescue reject Denied({ subject, action, resource, at: now })
+
+  // Owner-implicit shortcut: owner can always act on their own resource.
+  step allowed = if res.owner == subject
+                 then true
+                 else ask RBAC[Casbin].Enforce(subject, action, resource)
+                      rescue commit ok(Denied({ subject, action, resource, at: now }))
+
+  emit AccessChecked { subject, action, resource, allowed, at: now }
+
+  step result  = if allowed
+                 then commit ok(Allowed({ subject, action, resource, at: now }))
+                 else commit ok(Denied({ subject, action, resource, at: now }))
+}
+
+flow CreateResource(owner: Id, kind: ResourceKind, now: Timestamp, key: Key)
+  -> Result<{ resource: ResourceId }, UserNotFound>
+{
+  intent: """
+    Mint a new Resource, record ownership, and register the owner-implicit
+    policy with the external library so that RBAC[Casbin].Enforce calls
+    reflect the owner shortcut for callers who go through the library path.
+    Idempotent on key. Emits ResourceCreated.
+  """
+
+  step _    = ask User.findBy(id: owner)
+              rescue reject UserNotFound
+
+  step res  = ask Resource.create({
+                id:      generate(),
+                kind,
+                owner,
+                created: now,
+              })
+
+  // Register owner as having full access to this specific resource.
+  step _    = ask RBAC[Casbin].AddPolicy(owner, Admin, res.id)
+              rescue commit ok({ resource: res.id })
+
+  emit ResourceCreated { resource: res.id, owner, kind, at: now }
+  commit { resource: res.id }
+}
+
+// ─── Controller ───────────────────────────────────────────────────────────────
+
+controller RBAC {
+  // Admin role-management routes. BearerAuth is feature-scoped; RoleGated(Admin)
+  // added per-route to enforce the admin-only gate.
+
+  POST /users/:id/roles -> Grant(id, body.role, self, now, idempotency_key) {
+    auth:   bearer
+    policies: [RoleGated(Admin)]
+    body:   { role: Role, idempotency_key: Key }
+    map:
+      ok(_)                -> 204
+      err(AlreadyGranted)  -> 409 { error: "already_granted" }
+      err(NotAuthorized)   -> 403 { error: "not_authorized" }
+      err(UserNotFound)    -> 404 { error: "user_not_found" }
+  }
+
+  DELETE /users/:id/roles/:role -> Revoke(id, role, self, now, idempotency_key) {
+    auth:   bearer
+    policies: [RoleGated(Admin)]
+    body:   { idempotency_key: Key }
+    map:
+      ok(_)                -> 204
+      err(NotGranted)      -> 404 { error: "not_granted" }
+      err(NotAuthorized)   -> 403 { error: "not_authorized" }
+      err(UserNotFound)    -> 404 { error: "user_not_found" }
+  }
+
+  POST /resources -> CreateResource(self, body.kind, now, idempotency_key) {
+    auth:   bearer
+    policies: [RoleGated(Editor)]
+    body:   { kind: ResourceKind, idempotency_key: Key }
+    map:
+      ok(result)           -> 201 { resource_id: result.resource }
+      err(UserNotFound)    -> 404 { error: "user_not_found" }
+  }
+
+  // Admin-only debugging endpoint. Returns the raw allow/deny decision for a
+  // given (subject, action, resource) triple.
+  GET /check -> Check(query.subject, query.action, query.resource, now) {
+    auth:   bearer
+    policies: [RoleGated(Admin)]
+    map:
+      ok(Allowed r) -> 200 { allowed: true,  subject: r.subject, action: r.action }
+      ok(Denied  r) -> 200 { allowed: false, subject: r.subject, action: r.action }
+  }
+}
