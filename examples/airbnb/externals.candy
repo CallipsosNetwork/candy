@@ -1,0 +1,31 @@
+// externals.candy — external actor declarations for the airbnb example.
+//
+// Payments supports three live providers simultaneously. The booking saga
+// selects a provider at the call site via Payments[Tag]. Webhook routes for
+// all three emits are codegen-derived — no controller declaration needed.
+
+external actor Payments {
+  intent: "Payment provider — charges, refunds, and host transfers across Stripe, Polar, and LemonSqueezy."
+
+  providers: [Stripe, Polar, Lemon]
+
+  config Stripe: api_key:        secret "STRIPE_KEY"
+                 webhook_secret: secret "STRIPE_WEBHOOK_SECRET"
+  config Polar:  api_key:        secret "POLAR_KEY"
+                 webhook_secret: secret "POLAR_WEBHOOK_SECRET"
+  config Lemon:  api_key:        secret "LEMONSQUEEZY_KEY"
+                 webhook_secret: secret "LEMONSQUEEZY_WEBHOOK_SECRET"
+
+  accepts Charge(amount: Money, source: PaymentMethod, key: Key)
+    -> Result<ChargeId, PaymentDeclined | NetworkError | RateLimited>
+
+  accepts Refund(charge: ChargeId, amount: Money?, key: Key)
+    -> Result<RefundId, RefundError | NetworkError>
+
+  accepts Transfer(to: Id, amount: Money, key: Key)
+    -> Result<TransferId, TransferFailed | NetworkError>
+
+  emits ChargeSucceeded { charge: ChargeId, booking: Id, at: Timestamp }
+  emits ChargeFailed    { charge: ChargeId, booking: Id, reason: string, at: Timestamp }
+  emits RefundProcessed { refund: RefundId, charge: ChargeId, at: Timestamp }
+}

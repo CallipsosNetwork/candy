@@ -1,0 +1,45 @@
+// preferences.candy — per-target library and idiom preferences for notifications.
+// AI codegen consumes these as hints, not requirements.
+
+target go {
+  when need database  use sqlc
+  when need id        use ksuid
+  when need sendgrid  use sendgrid-go
+  when need mailgun   use mailgun-go
+  when need resend    use resend-go
+  when need twilio    use twilio-go
+  when need vonage    use vonage-go
+}
+
+target rust {
+  when need database  use sqlx
+  when need id        use uuid-v7
+  when need sendgrid  use sendgrid-rs
+  when need mailgun   use mailgun-rs
+  when need resend    use resend-rs
+  when need twilio    use twilio-rs
+  when need vonage    use vonage-rs
+}
+
+target typescript {
+  notes: "ESM only; tagged unions over class hierarchies"
+  when need queue     use bullmq
+  when need id        use cuid2
+  when need database  use drizzle
+  when need sendgrid  use sendgrid-node
+  when need mailgun   use mailgun-js
+  when need resend    use resend-node
+  when need twilio    use twilio-node
+  when need vonage    use vonage-node
+}
+
+target python {
+  when need queue     use celery
+  when need id        use ulid
+  when need database  use sqlalchemy
+  when need sendgrid  use sendgrid-python
+  when need mailgun   use mailgun-py
+  when need resend    use resend-py
+  when need twilio    use twilio-python
+  when need vonage    use vonage-python
+}

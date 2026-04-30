@@ -191,6 +191,11 @@ actor Booking(id: Id) {
 The subscriber doesn't know which provider fired the event; the contract is
 the event shape on the external actor.
 
+Webhook routes are **codegen-derived** — when an external actor declares
+`emits`, the codegen produces the inbound HTTP handler that validates the
+provider's signature and dispatches to subscribers. The spec does not
+declare controller routes for webhooks.
+
 ### Single provider, swappable
 
 When you'll only ever use one provider but want to swap by editing one
@@ -288,6 +293,35 @@ flow Name(arg: Type, ..., now: Timestamp, key: Key) -> Result<Ok, Err> {
 - `commit <value>` ends the flow with a success value. Bare `commit` returns
   unit.
 
+### Scheduled flows
+
+A `schedule` declaration runs a flow periodically or at a specific time. It
+lives at the top level of a feature, alongside `flow`. Two forms:
+
+**Recurring** — run every `<duration>`, optionally for each instance
+matching a predicate:
+
+```candy
+schedule ChargeCycle(now)
+  every 30d
+  for any subscription in Subscription where status == Active
+```
+
+The flow receives the matched instance (via the loop variable) and `now` as
+inputs. Predicates use the same `where` syntax as derive/lookup.
+
+**One-shot** — run once at a specific timestamp:
+
+```candy
+schedule SendReminder(user.id, now)
+  at user.created after 24h
+  for any user in User where verified == false
+```
+
+Schedules emit `ScheduleFired` events for observability. Failures rescheduling
+follow the flow's own `rescue` semantics — there is no implicit retry at the
+schedule layer.
+
 ---
 
 ## controller
@@ -358,6 +392,7 @@ prose {
 
   uses:
     feature  Wallet   for Topup, Debit
+    feature  Auth     for event UserSignedUp
     external Payments for Charge, Refund
 
   policies: [BearerAuth, RateLimit]
@@ -369,8 +404,12 @@ Fields:
 - **`intent:`** — what + why. Conventionally always present.
 - **`exports:`** — public API. Anything not exported is private; codegen
   refuses cross-feature references to private items.
-- **`uses:`** — cross-feature and external dependencies, with the specific
-  operations each consumer relies on. Makes the dependency graph grep-able.
+- **`uses:`** — cross-feature and external dependencies. Three forms:
+  - `feature X for OpName` — calls a flow or actor message exported by feature X.
+  - `feature X for event EventName` — subscribes to an event emitted by feature X.
+  - `external X for OpName` — calls or subscribes to an external actor.
+
+  Makes the dependency graph grep-able.
 - **`policies:`** — feature-scoped policies that apply to every controller
   and flow inside the feature.
 
@@ -543,7 +582,9 @@ field)` destructures variant payload.
 
 **Reserved primitives.** Built-in functions: `generate()` (new id),
 `hash(value)`, `verify(value, hash)`, `sum(list)`, `length(list)`, `last(list)`.
-Lists support `where <predicate>`, `+` (append), `[id]` (index by id field).
+`sum`, `length`, `last` work on lists of any numeric primitive, including
+branded `int`/`decimal` types like `Money`. Lists support `where <predicate>`,
+`+` (append), `[id]` (index by id field).
 
 **Comments.** `// line comment`. No block comments — paragraphs go in
 `intent:` blocks.

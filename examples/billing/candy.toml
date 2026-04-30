@@ -1,0 +1,31 @@
+[project]
+name    = "billing"
+version = "0.1.0"
+
+[candy]
+runtime = "0.1"
+
+# Targets — where generated code goes. One subdirectory per target under targets/.
+[targets.go]
+language  = "go"
+framework = "chi"
+
+[targets.rust]
+language  = "rust"
+framework = "axum"
+
+[targets.typescript]
+language  = "typescript"
+framework = "hono"
+
+[targets.python]
+language  = "python"
+framework = "fastapi"
+
+# Runtime deps — prompts, skills, scripts. `candy install` (future) fetches these.
+[deps]
+"candy/grammar"      = "0.1"
+"candy/codegen-go"   = "0.1"
+"candy/codegen-rust" = "0.1"
+"candy/codegen-ts"   = "0.1"
+"candy/codegen-py"   = "0.1"

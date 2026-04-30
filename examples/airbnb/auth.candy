@@ -1,0 +1,279 @@
+// auth.candy — User, Session, signup/login/logout.
+
+prose {
+  intent: """
+    Authentication for the Airbnb marketplace. Handles account creation,
+    credential verification, and session lifecycle. Users start as Guests
+    and may self-upgrade to Host or be promoted to Admin by an admin.
+
+    Every controller route in this feature is covered by BearerAuth at
+    feature scope. Signup and Login override that with auth: none. Routes
+    that require a minimum role layer RoleGated on top.
+  """
+
+  exports:
+    actor User, Session
+    flow  Signup, Login, Logout, Verify
+    event UserSignedUp, UserVerified, UserLoggedIn, SessionRevoked
+
+  policies: [BearerAuth]
+}
+
+// Password is feature-local. Shared types (Id, Timestamp, Email, PasswordHash,
+// Token, Key, Role) live in types.candy and are not redeclared.
+
+type Password string {
+  intent: "Plaintext at rest is forbidden — only PasswordHash persists."
+  policies: [PasswordStrength]
+}
+
+actor User(id: Id) {
+  state {
+    email:    Email
+    hash:     PasswordHash
+    role:     Role     = Guest
+    verified: bool     = false
+    created:  Timestamp
+  }
+
+  invariant "email is unique across all User instances"
+
+  accepts Verify() -> Result<unit, AlreadyVerified> {
+    intent: "Mark the user's email as verified. Idempotent guard via AlreadyVerified."
+    require: verified == false  rescue reject AlreadyVerified
+    effect: verified = true
+    emit UserVerified { user: self.id, at: now }
+    commit
+  }
+
+  accepts UpgradeToHost() -> Result<unit, AlreadyHost> {
+    intent: "Self-service promotion from Guest to Host. Rejects if already Host or Admin."
+    require: role == Guest  rescue reject AlreadyHost
+    effect: role = Host
+    commit
+  }
+
+  accepts Promote(to: Role) -> Result<unit, InvalidPromotion> {
+    intent: "Admin-driven role change. Rejects Admin → Guest demotions."
+    require: not (role == Admin and to == Guest)  rescue reject InvalidPromotion
+    effect: role = to
+    commit
+  }
+}
+
+actor Session(token: Token) {
+  state {
+    user:    Id
+    role:    Role
+    issued:  Timestamp
+    expires: Timestamp = now after 7d
+    revoked: bool      = false
+  }
+
+  invariant "expires > issued"
+
+  accepts Validate(now: Timestamp) -> Result<{ user: Id, role: Role }, SessionInvalid> {
+    intent: "Return user id and role if the session is live; reject otherwise."
+    require: revoked == false  rescue reject SessionInvalid
+    require: now < expires     rescue reject SessionInvalid
+    commit { user: self.user, role: self.role }
+  }
+
+  accepts Revoke() -> unit {
+    intent: "Mark the session as revoked. Idempotent — re-revoking is a no-op."
+    effect: revoked = true
+    emit SessionRevoked { token: self.token, user: self.user, at: now }
+    commit
+  }
+}
+
+// ─── Policies ─────────────────────────────────────────────────────────────────
+
+policy PasswordStrength {
+  intent: """
+    A password is acceptable when:
+      - length >= 12
+      - contains at least one letter and at least one digit
+      - is not in the common-password blocklist
+
+    Hashing uses argon2id with parameters from deployment secrets.
+    Plaintext passwords never persist; only PasswordHash is stored.
+  """
+  examples:
+    - given: "short1"
+      then:  err(TooShort)
+    - given: "alllowercase"
+      then:  err(MissingDigit)
+    - given: "password123"
+      then:  err(InBlocklist)
+    - given: "correct horse battery staple 9"
+      then:  ok
+}
+
+policy BearerAuth {
+  intent: """
+    Validates the Authorization: Bearer <token> header on every request.
+    Calls Session(token).Validate(now) and binds the returned user id and
+    role for downstream RoleGated checks. Signup and Login override this
+    at route scope with auth: none because callers have no session yet.
+
+    On missing or invalid token the request is rejected with 401.
+    On expired or revoked session the request is rejected with 401.
+  """
+  examples:
+    - given: "valid unexpired token for user with role Host"
+      then:  ok({ user: <id>, role: Host })
+    - given: "expired token"
+      then:  err(SessionInvalid)
+    - given: "missing Authorization header"
+      then:  err(Unauthenticated)
+}
+
+policy RoleGated {
+  intent: """
+    Compares the session-bound role against the required minimum. Roles
+    rank Guest < Host < Admin. A caller whose role is below the required
+    level receives 403 Forbidden; an equal or higher role proceeds.
+
+    The required role is a parameter supplied at the attachment site.
+  """
+  examples:
+    - given: "caller role Guest, required Host"
+      then:  err(InsufficientRole)
+    - given: "caller role Host, required Host"
+      then:  ok
+    - given: "caller role Admin, required Admin"
+      then:  ok
+    - given: "caller role Guest, required Admin"
+      then:  err(InsufficientRole)
+}
+
+// ─── Flows ────────────────────────────────────────────────────────────────────
+
+flow Signup(email: Email, password: Password, now: Timestamp, key: Key)
+  -> Result<{ user: Id, token: Token }, WeakPassword | EmailTaken>
+{
+  intent: """
+    Create a new Guest account, hash the password, and issue an initial
+    session. Idempotent on key — replaying returns the same ids without
+    creating duplicate records or re-emitting events.
+  """
+
+  step strength = PasswordStrength(password)
+                  rescue reject WeakPassword(reason)
+
+  step taken    = if any user in User where user.email == email
+                  then reject EmailTaken
+
+  step user     = ask User.create({
+                    id:      generate(),
+                    email,
+                    hash:    hash(password),
+                    role:    Guest,
+                    created: now,
+                  })
+
+  step session  = ask Session.create({
+                    token:   generate(),
+                    user:    user.id,
+                    role:    Guest,
+                    issued:  now,
+                    expires: now after 7d,
+                  })
+
+  emit UserSignedUp { user: user.id, email, at: now }
+  commit { user: user.id, token: session.token }
+}
+
+flow Login(email: Email, password: Password, now: Timestamp, key: Key)
+  -> Result<{ user: Id, role: Role, token: Token }, InvalidCredentials>
+{
+  intent: """
+    Authenticate by email and password. On success, issue a new session
+    carrying the user's current role. Errors are opaque — never reveal
+    whether email or password was the wrong side.
+  """
+
+  step user    = ask User.findBy(email)                       rescue reject InvalidCredentials
+  step ok      = if not verify(password, user.hash) then reject InvalidCredentials
+  step session = ask Session.create({
+                   token:   generate(),
+                   user:    user.id,
+                   role:    user.role,
+                   issued:  now,
+                   expires: now after 7d,
+                 })
+
+  emit UserLoggedIn { user: user.id, at: now }
+  commit { user: user.id, role: user.role, token: session.token }
+}
+
+flow Logout(token: Token, now: Timestamp, key: Key) -> unit {
+  intent: "Revoke the session for the given bearer token. Idempotent."
+  step _ = ask Session(token).Revoke()
+  commit
+}
+
+flow Verify(user: Id, now: Timestamp, key: Key)
+  -> Result<unit, AlreadyVerified | UserNotFound>
+{
+  intent: "Admin-triggered verification. Email-confirmation loop omitted for brevity."
+  step u = ask User.findBy(id: user)  rescue reject UserNotFound
+  step _ = ask User(user).Verify()    rescue reject AlreadyVerified
+  commit
+}
+
+// ─── Controller ───────────────────────────────────────────────────────────────
+
+controller Auth {
+  POST /signup -> Signup(email, password, now, idempotency_key) {
+    auth: none
+    body: { email: Email, password: Password, idempotency_key: Key }
+    map:
+      ok(result)               -> 201 { user_id: result.user, token: result.token }
+      err(WeakPassword reason) -> 422 { error: "weak_password", reason }
+      err(EmailTaken)          -> 409 { error: "email_taken" }
+  }
+
+  POST /login -> Login(email, password, now, idempotency_key) {
+    auth: none
+    body: { email: Email, password: Password, idempotency_key: Key }
+    map:
+      ok(result)              -> 200 { user_id: result.user, role: result.role, token: result.token }
+      err(InvalidCredentials) -> 401 { error: "invalid_credentials" }
+  }
+
+  POST /logout -> Logout(bearer, now, idempotency_key) {
+    auth: bearer
+    body: { idempotency_key: Key }
+    map:
+      ok(_) -> 204
+  }
+
+  POST /me/upgrade-to-host -> User(self).UpgradeToHost() {
+    auth: bearer
+    policies: [RoleGated(Guest)]
+    map:
+      ok(_)           -> 200 { role: "host" }
+      err(AlreadyHost) -> 409 { error: "already_host" }
+  }
+
+  POST /admin/users/:id/promote -> User(id).Promote(role) {
+    auth: bearer
+    policies: [RoleGated(Admin)]
+    body: { role: Role }
+    map:
+      ok(_)                  -> 200 { promoted: true }
+      err(InvalidPromotion)  -> 422 { error: "invalid_promotion" }
+  }
+
+  POST /admin/users/:id/verify -> Verify(id, now, idempotency_key) {
+    auth: bearer
+    policies: [RoleGated(Admin)]
+    body: { idempotency_key: Key }
+    map:
+      ok(_)                -> 200 { verified: true }
+      err(AlreadyVerified) -> 409 { error: "already_verified" }
+      err(UserNotFound)    -> 404 { error: "user_not_found" }
+  }
+}

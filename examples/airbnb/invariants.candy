@@ -1,0 +1,16 @@
+// invariants.candy — system-wide invariants for the airbnb example.
+//
+// These truths span multiple features and cannot be owned by any single
+// actor. Each is enforced by conformance tests generated from the spec.
+
+invariant SlotIntegrity:
+  "no two Confirmed bookings share a (listing, date) tuple"
+
+invariant CouponSingleUse:
+  "a coupon is redeemed at most once per (coupon, user) pair"
+
+invariant BookingHostMatchesListing:
+  "for any Booking b: b.host == Listing(b.listing).host"
+
+invariant SessionUserConsistency:
+  "for any active Session s: User(s.user) exists and is verified"

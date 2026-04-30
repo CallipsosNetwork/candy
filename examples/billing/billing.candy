@@ -1,0 +1,54 @@
+// billing.candy — TODO: implement per README.md scope.
+//
+// Scheduled recurring charges with retry-on-decline. Exercises the
+// TIME axis: schedule, after, until, plus compensation on terminal
+// failure (subscription suspension).
+
+prose {
+  intent: """
+    Recurring subscriptions billed against an external payment
+    provider. A scheduled job per active subscription attempts the
+    monthly charge; declines trigger a retry after 7d, escalating to
+    suspension if still failing after 21d. Providers (Stripe, Polar,
+    Lemon) are selected per call via Actor[Tag].
+  """
+
+  exports:
+    actor Subscription, Customer
+    flow  Subscribe, Cancel, ChargeCycle, RetryCharge
+    type  Money, PlanId, Key
+    event SubscriptionStarted, SubscriptionCharged,
+          SubscriptionPastDue, SubscriptionSuspended,
+          SubscriptionCancelled
+
+  uses:
+    external Payments for Charge, Refund
+
+  policies: [BillingAtomicity]
+}
+
+// TODO: types — Id, Timestamp, Key, Money (USD minor), PlanId,
+//       ChargeId, BillingCycle record.
+// TODO: enum SubscriptionStatus { Active, PastDue, Suspended,
+//       Cancelled }.
+// TODO: actor Customer — id, default payment method, billing email.
+// TODO: actor Subscription — id, customer, plan, status, period_end,
+//       audit of cycles; invariant: period_end > created.
+// TODO: external actor Payments with providers: [Stripe, Polar, Lemon];
+//       accepts Charge, Refund; emits ChargeSucceeded, ChargeFailed.
+// TODO: schedule ChargeCycle every period (monthly) per Active
+//       subscription.
+// TODO: flow Subscribe(customer, plan, key, now).
+// TODO: flow Cancel(subscription, now) — sets status = Cancelled at
+//       end of current period.
+// TODO: flow ChargeCycle(subscription, now, key) — Active path; on
+//       decline, schedule RetryCharge after 7d, emit
+//       SubscriptionPastDue, transition to PastDue.
+// TODO: flow RetryCharge(subscription, now, key) — runs after 7d
+//       until 21d after the original cycle; on terminal failure,
+//       compensate by suspending the subscription and emit
+//       SubscriptionSuspended.
+// TODO: policy BillingAtomicity — ensures charge result and
+//       subscription status transitions stay consistent.
+// TODO: events.
+// TODO: controller Billing with bearer-auth routes.

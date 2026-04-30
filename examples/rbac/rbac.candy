@@ -1,0 +1,40 @@
+// rbac.candy — TODO: implement per README.md scope.
+//
+// Role-based access control delegated to an external library.
+// Demonstrates abstract external actor with multiple providers
+// (Casbin, Oso, Casl), Actor[Tag] selection at call sites, and
+// controller-scoped policy attachment for role-gated routes.
+
+prose {
+  intent: """
+    Role-based access control over Resources, owned by Users.
+    Authorization decisions are delegated to a swappable external
+    RBAC library — Casbin, Oso, or Casl — selected per call via
+    Actor[Tag]. The candy spec owns the role/permission model and
+    the audit story; the library owns the policy evaluation.
+  """
+
+  exports:
+    actor User, Resource
+    flow  Grant, Revoke, Check, CreateResource
+    type  Role, Permission, ResourceId
+    event RoleGranted, RoleRevoked, AccessChecked
+
+  uses:
+    external RBAC for Enforce, AddPolicy, RemovePolicy
+
+  policies: [RoleGated]
+}
+
+// TODO: types — Id, Timestamp, Key, Role enum, Permission enum, ResourceId.
+// TODO: actor User — id, role assignments, audit of grants/revokes.
+// TODO: actor Resource — id, owner, kind, created.
+// TODO: external actor RBAC with providers: [Casbin, Oso, Casl];
+//       accepts Enforce(subject, action, object), AddPolicy, RemovePolicy.
+// TODO: policy RoleGated — feature-scope; rejects unauthorized callers.
+// TODO: flow Grant(user, role, now, key) — admin grants a role to a user.
+// TODO: flow Revoke(user, role, now, key) — admin revokes a role.
+// TODO: flow Check(subject, action, resource) -> Result<Allowed, Denied>.
+// TODO: flow CreateResource(owner, kind, now, key).
+// TODO: events RoleGranted, RoleRevoked, AccessChecked.
+// TODO: controller RBAC with role-gated routes (admin-only Grant/Revoke).

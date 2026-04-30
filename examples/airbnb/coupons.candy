@@ -1,0 +1,361 @@
+// coupons.candy — promotional coupon management for the airbnb marketplace.
+//
+// Leaf feature: no cross-feature dependencies. Exports the validate/redeem/restore
+// interface consumed by the booking saga.
+
+prose {
+  intent: """
+    Coupons are platform-issued discount codes that reduce the price of a
+    booking. Admins create coupons with a kind (percentage off or fixed
+    dollar amount), a value, a maximum number of redemptions, and an
+    expiry timestamp. Guests apply a coupon code during checkout; the
+    booking saga validates eligibility before charging and redeems the
+    coupon after a successful charge.
+
+    A coupon is eligible when it exists, has not expired, has not been
+    exhausted across all users, and has not already been redeemed by the
+    requesting user. Eligibility is a pure check; redemption is the
+    state-changing step. The restore operation undoes a redemption — used
+    by the booking saga's compensation path when a downstream step fails
+    after the coupon was already redeemed.
+  """
+
+  exports:
+    actor Coupon
+    flow  CreateCoupon, DeleteCoupon, ValidateCoupon, RedeemCoupon, RestoreCoupon
+    event CouponCreated, CouponRedeemed, CouponRestored
+
+  policies: [BearerAuth]
+}
+
+// Feature-local record type. Not in shared types — it is private to this
+// feature and only appears in the Coupon actor's redemptions journal.
+type Redemption {
+  user:    Id
+  booking: Id
+  at:      Timestamp
+}
+
+// ---------------------------------------------------------------------------
+// Actor
+// ---------------------------------------------------------------------------
+
+actor Coupon(code: CouponCode) {
+  state {
+    kind:        CouponKind
+    value:       int
+    maxUses:     int
+    expires:     Timestamp
+    created:     Timestamp
+    redemptions: [Redemption]
+  }
+
+  // Percent coupons express value as 1–100 (the discount percentage).
+  // FixedAmount coupons express value in Money minor units (e.g. 500 = $5.00).
+  invariant kind == Percent     => value >= 1 and value <= 100
+  invariant kind == FixedAmount => value > 0
+  invariant length(redemptions) <= maxUses
+  invariant expires > created
+
+  // Structural shape invariant: each user appears at most once in the journal.
+  // CouponEligibility enforces the prose-level rule; this guards the data shape.
+  invariant "all redemptions[i].user values are distinct"
+
+  // True when the coupon can still accept new redemptions right now.
+  derive available = length(redemptions) < maxUses and now < expires
+
+  accepts Redeem(user: Id, booking: Id, now: Timestamp, key: Key)
+    -> Result<unit, AlreadyRedeemed | Exhausted | Expired>
+  {
+    intent: """
+      Append a redemption to the journal if the coupon is still available
+      and this user has not already redeemed it. Idempotent on key — a
+      replay with the same key returns ok without re-appending.
+    """
+    require: not any r in redemptions where r.user == user
+             rescue reject AlreadyRedeemed
+    require: length(redemptions) < maxUses
+             rescue reject Exhausted
+    require: now < expires
+             rescue reject Expired
+    effect:  redemptions = redemptions + [{ user, booking, at: now }]
+    emit CouponRedeemed { coupon: self.code, user, booking, at: now }
+    commit
+  }
+
+  accepts Restore(booking: Id, key: Key) -> unit {
+    intent: """
+      Remove the redemption matching this booking from the journal.
+      Idempotent — if no matching redemption exists the call is a no-op.
+      Used by the booking saga compensation path.
+    """
+    effect:  redemptions = redemptions where redemptions.booking != booking
+    emit CouponRestored { coupon: self.code, booking, at: now }
+    commit
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Policy
+// ---------------------------------------------------------------------------
+
+policy CouponEligibility {
+  intent: """
+    A coupon is eligible to redeem when all four conditions hold:
+
+      - it exists: the code resolves to a known Coupon actor.
+      - it has not expired: now < expires (strictly before the expiry
+        timestamp, so a coupon that expires at midnight is unusable at
+        midnight).
+      - it has not been exhausted: length(redemptions) < maxUses, meaning
+        at least one redemption slot remains across all users.
+      - the requesting user has not already redeemed it: no entry in the
+        coupon's redemptions journal carries this user's id.
+
+    Eligibility is evaluated before redemption so that callers receive a
+    typed error that pinpoints the exact failure mode rather than a generic
+    rejection from the actor. ValidateCoupon exposes this check as a
+    read-only preview (used by the checkout UI); RedeemCoupon re-evaluates
+    it immediately before mutating state so the two steps are never
+    inconsistent in a concurrent system.
+
+    Error variants are intentionally distinct — CouponNotFound, Expired,
+    Exhausted, AlreadyRedeemed — because the checkout UI must surface
+    different copy for each. "This code doesn't exist" and "you've already
+    used this code" are meaningfully different user experiences.
+  """
+  examples:
+    - given: >
+        code "SAVE10" resolves to a Percent coupon (value=10, maxUses=100),
+        length(redemptions)=42, expires=2027-01-01T00:00:00Z,
+        now=2026-06-15T12:00:00Z, requesting user has no prior redemption
+      then: ok({ coupon: <id>, kind: Percent, value: 10 })
+
+    - given: >
+        code "GHOST99" does not resolve to any Coupon actor
+      then: err(CouponNotFound)
+
+    - given: >
+        code "SUMMER20" resolves to a valid coupon, but
+        now=2026-09-01T00:00:00Z > expires=2026-08-31T23:59:59Z
+      then: err(Expired)
+
+    - given: >
+        code "FLASH50" resolves to a FixedAmount coupon (maxUses=5),
+        length(redemptions)=5 (all slots consumed), now is before expires,
+        requesting user has no prior redemption
+      then: err(Exhausted)
+
+    - given: >
+        code "WELCOME5" resolves to a valid, non-exhausted, non-expired coupon,
+        but the requesting user's id already appears in redemptions
+      then: err(AlreadyRedeemed)
+
+    - given: >
+        code "NEWYEAR" resolves to a valid coupon,
+        now=expires exactly (not strictly before)
+      then: err(Expired)
+}
+
+// ---------------------------------------------------------------------------
+// Flows
+// ---------------------------------------------------------------------------
+
+flow CreateCoupon(
+  code:    CouponCode,
+  kind:    CouponKind,
+  value:   int,
+  maxUses: int,
+  expires: Timestamp,
+  now:     Timestamp,
+  key:     Key
+) -> Result<{ coupon: Id }, InvalidCoupon | CodeTaken>
+{
+  intent: """
+    Create a new coupon. Validates that the value is within bounds for the
+    given kind, that maxUses is at least 1, and that the expiry is in the
+    future. Rejects CodeTaken if a coupon with this code already exists.
+    Idempotent on key.
+  """
+
+  step bounds = if kind == Percent and (value < 1 or value > 100)
+                then reject InvalidCoupon("percent value must be 1–100")
+
+  step bounds2 = if kind == FixedAmount and value <= 0
+                 then reject InvalidCoupon("fixed amount value must be positive")
+
+  step uses    = if maxUses < 1
+                 then reject InvalidCoupon("maxUses must be at least 1")
+
+  step future  = if expires <= now
+                 then reject InvalidCoupon("expires must be in the future")
+
+  step taken   = if any c in Coupon where c.code == code
+                 then reject CodeTaken
+
+  step coupon  = ask Coupon.create({
+                   code,
+                   kind,
+                   value,
+                   maxUses,
+                   expires,
+                   created:     now,
+                   redemptions: [],
+                 })
+
+  emit CouponCreated { coupon: coupon.code, code, at: now }
+  commit { coupon: coupon.code }
+}
+
+flow DeleteCoupon(coupon: Id, now: Timestamp, key: Key)
+  -> Result<unit, CouponNotFound | CouponInUse>
+{
+  intent: """
+    Delete a coupon. Rejects CouponInUse if the coupon has any redemptions,
+    because deleting a redeemed coupon would leave bookings referencing a
+    non-existent discount. Idempotent on key.
+  """
+
+  step c    = ask Coupon.findBy(id: coupon)
+              rescue reject CouponNotFound
+
+  step live = if length(c.redemptions) > 0
+              then reject CouponInUse
+
+  effect: Coupon(coupon).delete()
+  commit
+}
+
+flow ValidateCoupon(code: CouponCode, user: Id, now: Timestamp)
+  -> Result<{ coupon: Id, kind: CouponKind, value: int },
+             CouponNotFound | Expired | Exhausted | AlreadyRedeemed>
+{
+  intent: """
+    Pure eligibility check — no state change. Governed by CouponEligibility.
+    Returns the coupon's discount parameters on success so the booking
+    checkout UI can compute and display the discounted price before the
+    user confirms. The booking saga calls this before charging; the
+    RedeemCoupon flow re-evaluates eligibility at the time of actual
+    redemption.
+  """
+
+  step c = ask Coupon.findBy(code)
+           rescue reject CouponNotFound
+
+  step _ = if now >= c.expires
+           then reject Expired
+
+  step _ = if length(c.redemptions) >= c.maxUses
+           then reject Exhausted
+
+  step _ = if any r in c.redemptions where r.user == user
+           then reject AlreadyRedeemed
+
+  commit { coupon: c.code, kind: c.kind, value: c.value }
+}
+
+flow RedeemCoupon(
+  code:    CouponCode,
+  user:    Id,
+  booking: Id,
+  now:     Timestamp,
+  key:     Key
+) -> Result<unit, CouponNotFound | Expired | Exhausted | AlreadyRedeemed>
+{
+  intent: """
+    Redeem a coupon on behalf of a user for a specific booking. Governed by
+    CouponEligibility at flow scope — eligibility is re-checked immediately
+    before asking the actor to mutate state. Idempotent on key: replaying
+    the same key returns ok without double-appending. Called by the booking
+    saga after a charge succeeds; compensation is RestoreCoupon.
+  """
+
+  policies: [CouponEligibility]
+
+  step c = ask Coupon.findBy(code)
+           rescue reject CouponNotFound
+
+  step _ = ask Coupon(c.code).Redeem(user, booking, now, key)
+           rescue reject err
+}
+
+flow RestoreCoupon(coupon: Id, booking: Id, key: Key) -> unit {
+  intent: """
+    Idempotent unredeem. Removes the redemption matching the booking from
+    the coupon's journal. Called by the booking saga's compensation path
+    when a step after RedeemCoupon fails (e.g. a downstream transfer).
+    If no matching redemption exists the call is a silent no-op.
+  """
+
+  step c = ask Coupon.findBy(id: coupon)
+           rescue commit
+
+  step _ = ask Coupon(c.code).Restore(booking, key)
+  commit
+}
+
+// ---------------------------------------------------------------------------
+// Policies (admin gate + role check)
+// ---------------------------------------------------------------------------
+
+policy AdminGated {
+  intent: """
+    The caller's session-bound role must be Admin. Any authenticated user
+    whose role is Guest or Host is rejected. This policy is attached at
+    route scope on admin-only endpoints; BearerAuth (feature-scope) runs
+    first to establish the session, then AdminGated checks the role.
+  """
+  examples:
+    - given: authenticated user with role Admin
+      then:  ok
+
+    - given: authenticated user with role Host
+      then:  err(NotAdmin)
+
+    - given: authenticated user with role Guest
+      then:  err(NotAdmin)
+}
+
+// ---------------------------------------------------------------------------
+// Controller
+// ---------------------------------------------------------------------------
+
+controller Coupons {
+  // Admin coupon management — BearerAuth is feature-scoped; AdminGated added
+  // per-route for the mutating admin endpoints.
+
+  POST /admin/coupons -> CreateCoupon(body.code, body.kind, body.value, body.maxUses, body.expires, now, idempotency_key) {
+    auth: bearer
+    policies: [AdminGated]
+    body: { code: CouponCode, kind: CouponKind, value: int, maxUses: int, expires: Timestamp, idempotency_key: Key }
+    map:
+      ok(result)                      -> 201 { coupon_id: result.coupon }
+      err(InvalidCoupon reason)       -> 422 { error: "invalid_coupon", reason }
+      err(CodeTaken)                  -> 409 { error: "code_taken" }
+  }
+
+  DELETE /admin/coupons/:id -> DeleteCoupon(id, now, idempotency_key) {
+    auth: bearer
+    policies: [AdminGated]
+    body: { idempotency_key: Key }
+    map:
+      ok(_)                -> 204
+      err(CouponNotFound)  -> 404 { error: "coupon_not_found" }
+      err(CouponInUse)     -> 409 { error: "coupon_in_use" }
+  }
+
+  // Any authenticated user can validate a coupon code to preview the discount.
+  // No AdminGated — guests use this at checkout before confirming a booking.
+  GET /coupons/:code/validate -> ValidateCoupon(code, self, now) {
+    auth: bearer
+    map:
+      ok(result)           -> 200 { coupon_id: result.coupon, kind: result.kind, value: result.value }
+      err(CouponNotFound)  -> 404 { error: "coupon_not_found" }
+      err(Expired)         -> 410 { error: "coupon_expired" }
+      err(Exhausted)       -> 410 { error: "coupon_exhausted" }
+      err(AlreadyRedeemed) -> 409 { error: "already_redeemed" }
+  }
+
+  // RedeemCoupon and RestoreCoupon are not exposed as HTTP endpoints.
+  // They are called exclusively by the booking saga via flow invocation.
+}

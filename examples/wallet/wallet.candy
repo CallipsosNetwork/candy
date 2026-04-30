@@ -1,0 +1,37 @@
+// wallet.candy — TODO: implement per README.md scope.
+//
+// Money primitives with idempotency, append-only journal, and
+// conservation invariants. No external SDKs — pure in-spec accounting.
+
+prose {
+  intent: """
+    A per-user wallet with topup, withdraw, and transfer flows.
+    Money is integer minor units in USD. Every state change appends
+    a journal entry; balance is derived from the journal so the two
+    cannot disagree. Replays are idempotent on key.
+  """
+
+  exports:
+    actor Wallet
+    flow  Topup, Withdraw, Transfer
+    type  Money, Key
+    event WalletTopped, WalletWithdrawn, WalletTransferred
+
+  policies: [TransferAtomicity]
+}
+
+// TODO: types — Id, Timestamp, Key, Money (unit: minor, currency: USD,
+//       round: nearest), JournalEntry record.
+// TODO: actor Wallet — id, owner, journal: [JournalEntry], derived
+//       balance = sum(journal.delta); invariants: balance >= 0 and
+//       balance == sum(journal.delta).
+// TODO: accepts Credit(amount, key, now), Debit(amount, key, now) on
+//       Wallet — both idempotent on key.
+// TODO: policy TransferAtomicity — flow-scope on Transfer; prose plus
+//       examples covering self-transfer, insufficient funds, replay.
+// TODO: flow Topup(wallet, amount, key, now).
+// TODO: flow Withdraw(wallet, amount, key, now).
+// TODO: flow Transfer(from, to, amount, key, now) — debits source,
+//       credits destination, compensates source on credit failure.
+// TODO: events WalletTopped, WalletWithdrawn, WalletTransferred.
+// TODO: controller Wallets with bearer-auth routes.

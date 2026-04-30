@@ -1,0 +1,36 @@
+// preferences.candy — per-target library and idiom preferences for rbac.
+// AI codegen consumes these as hints, not requirements.
+//
+// Note: `casl` is JavaScript-only. On Go/Rust/Python it is intentionally
+// unbound; codegen errors clearly if a flow tries `RBAC[Casl]` on those
+// targets. Pick `Casbin` or `Oso` instead for cross-target portability.
+
+target go {
+  when need database  use sqlc
+  when need id        use ksuid
+  when need casbin    use casbin-go
+  when need oso       use oso-go
+}
+
+target rust {
+  when need database  use sqlx
+  when need id        use uuid-v7
+  when need casbin    use casbin-rs
+  when need oso       use oso
+}
+
+target typescript {
+  notes: "ESM only; tagged unions over class hierarchies"
+  when need id        use cuid2
+  when need database  use drizzle
+  when need casbin    use node-casbin
+  when need oso       use oso-cloud
+  when need casl      use casl-ability
+}
+
+target python {
+  when need id        use ulid
+  when need database  use sqlalchemy
+  when need casbin    use casbin
+  when need oso       use oso
+}
