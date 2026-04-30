@@ -1,0 +1,27 @@
+// events.candy — cross-feature events for the airbnb example.
+//
+// Only events that cross feature boundaries live here. Per-feature events
+// (emitted and consumed within one feature) are declared in that feature's
+// file. All events use delivery: eager unless noted; ordering is by the
+// most relevant identifier so subscribers can dedupe.
+
+// auth events
+event UserSignedUp   { payload: { user: Id, email: Email, at: Timestamp }, delivery: eager }
+event UserVerified   { payload: { user: Id, at: Timestamp },               delivery: eager }
+event UserLoggedIn   { payload: { user: Id, at: Timestamp },               delivery: eager, order: by user }
+event SessionRevoked { payload: { token: Token, user: Id, at: Timestamp }, delivery: eager }
+
+// listings events
+event ListingCreated { payload: { listing: Id, host: Id, at: Timestamp }, delivery: eager, order: by listing }
+event ListingUpdated { payload: { listing: Id, at: Timestamp },           delivery: eager, order: by listing }
+event ListingHidden  { payload: { listing: Id, at: Timestamp },           delivery: eager, order: by listing }
+
+// coupons events
+event CouponCreated  { payload: { coupon: Id, code: CouponCode, at: Timestamp },            delivery: eager }
+event CouponRedeemed { payload: { coupon: Id, user: Id, booking: Id, at: Timestamp },       delivery: eager, order: by coupon }
+event CouponRestored { payload: { coupon: Id, booking: Id, at: Timestamp },                 delivery: eager, order: by coupon }
+
+// booking events
+event BookingPlaced    { payload: { booking: Id, listing: Id, guest: Id, dates: DateRange, total: Money, at: Timestamp }, delivery: eager, order: by booking }
+event BookingConfirmed { payload: { booking: Id, charge: ChargeId, at: Timestamp },         delivery: eager, order: by booking }
+event BookingCancelled { payload: { booking: Id, reason: string, at: Timestamp },           delivery: eager, order: by booking }
