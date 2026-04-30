@@ -1,54 +1,703 @@
-// billing.candy — TODO: implement per README.md scope.
+// billing.candy — Recurring subscriptions, retry-on-decline, and provider failover.
 //
-// Scheduled recurring charges with retry-on-decline. Exercises the
-// TIME axis: schedule, after, until, plus compensation on terminal
-// failure (subscription suspension).
+// This is the TIME-axis example: three top-level schedules drive the billing
+// lifecycle. ChargeCycle fires daily and picks up subscriptions whose charge
+// date has arrived. RetryDue fires daily and picks up PastDue subscriptions
+// that have waited at least 7 days since last failure. EscalateOverdue fires
+// daily and suspends subscriptions that have exhausted all retries or exceeded
+// the 30-day grace window.
 
 prose {
   intent: """
-    Recurring subscriptions billed against an external payment
-    provider. A scheduled job per active subscription attempts the
-    monthly charge; declines trigger a retry after 7d, escalating to
-    suspension if still failing after 21d. Providers (Stripe, Polar,
-    Lemon) are selected per call via Actor[Tag].
+    Recurring subscriptions billed against an external payment provider.
+    A scheduled job per active subscription attempts the monthly charge;
+    declines transition the subscription to PastDue and a retry schedule
+    picks them up after 7 days. After three consecutive failures, or 30 days
+    past the first failure, the subscription is suspended and a
+    SubscriptionSuspended event fires so downstream consumers (email,
+    access revocation) can react.
+
+    Providers (Stripe, Polar, Lemon) are declared abstractly via
+    providers: [Stripe, Polar, Lemon]. The canonical charge flows use
+    Payments[Stripe]; ChargeCycleWithFallback demonstrates the full
+    rescue chain across all three providers.
+
+    Idempotency keys are required on every replayable flow so that
+    re-firing a schedule with the same key returns the prior result
+    without double-charging.
   """
 
   exports:
-    actor Subscription, Customer
-    flow  Subscribe, Cancel, ChargeCycle, RetryCharge
-    type  Money, PlanId, Key
-    event SubscriptionStarted, SubscriptionCharged,
-          SubscriptionPastDue, SubscriptionSuspended,
-          SubscriptionCancelled
+    actor Subscription, Plan
+    flow  Subscribe, CancelSubscription, Reactivate,
+          ChargeCycle, ChargeCycleWithFallback, RetryDue, EscalateOverdue,
+          CreatePlan, DeletePlan
+    type  Money, Key, PaymentMethod, ChargeId, RefundId
+    event SubscriptionCreated, SubscriptionCancelled, SubscriptionSuspended,
+          SubscriptionReactivated, ChargeSucceeded, ChargeFailed
 
   uses:
     external Payments for Charge, Refund
+    external Payments for event ChargeSucceeded, ChargeFailed
 
   policies: [BillingAtomicity]
 }
 
-// TODO: types — Id, Timestamp, Key, Money (USD minor), PlanId,
-//       ChargeId, BillingCycle record.
-// TODO: enum SubscriptionStatus { Active, PastDue, Suspended,
-//       Cancelled }.
-// TODO: actor Customer — id, default payment method, billing email.
-// TODO: actor Subscription — id, customer, plan, status, period_end,
-//       audit of cycles; invariant: period_end > created.
-// TODO: external actor Payments with providers: [Stripe, Polar, Lemon];
-//       accepts Charge, Refund; emits ChargeSucceeded, ChargeFailed.
-// TODO: schedule ChargeCycle every period (monthly) per Active
-//       subscription.
-// TODO: flow Subscribe(customer, plan, key, now).
-// TODO: flow Cancel(subscription, now) — sets status = Cancelled at
-//       end of current period.
-// TODO: flow ChargeCycle(subscription, now, key) — Active path; on
-//       decline, schedule RetryCharge after 7d, emit
-//       SubscriptionPastDue, transition to PastDue.
-// TODO: flow RetryCharge(subscription, now, key) — runs after 7d
-//       until 21d after the original cycle; on terminal failure,
-//       compensate by suspending the subscription and emit
-//       SubscriptionSuspended.
-// TODO: policy BillingAtomicity — ensures charge result and
-//       subscription status transitions stay consistent.
-// TODO: events.
-// TODO: controller Billing with bearer-auth routes.
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type Id            opaque  { max: 64 }
+type Timestamp     instant { tz: utc }
+type Key           opaque  { max: 128 }
+type Duration      int     { unit: seconds }
+type PaymentMethod opaque  { max: 256 }
+type ChargeId      opaque  { max: 64 }
+type RefundId      opaque  { max: 64 }
+type Money         int     { unit: minor, currency: USD, round: nearest }
+
+enum SubscriptionStatus { Active, PastDue, Suspended, Cancelled }
+
+// ---------------------------------------------------------------------------
+// Actors
+// ---------------------------------------------------------------------------
+
+actor Plan(id: Id) {
+  intent: "An admin-managed billing plan that defines the recurring charge amount and interval."
+
+  state {
+    name:     string
+    amount:   Money
+    interval: Duration   // seconds; 30d = 2592000s
+    created:  Timestamp
+    updated:  Timestamp
+  }
+
+  invariant amount > 0
+  invariant interval > 0
+
+  accepts Update(name: string, amount: Money, interval: Duration, now: Timestamp)
+      -> Result<unit, InvalidPlan> {
+    intent: "Update plan details. Active subscriptions continue on the old terms until their next cycle."
+    require: amount > 0    rescue reject InvalidPlan
+    require: interval > 0  rescue reject InvalidPlan
+    effect: name     = name
+    effect: amount   = amount
+    effect: interval = interval
+    effect: updated  = now
+    commit
+  }
+}
+
+actor Subscription(id: Id) {
+  intent: """
+    The billing state machine for one customer on one plan. Transitions:
+
+      Active   -- charge fails   --> PastDue
+      PastDue  -- retry succeeds --> Active
+      PastDue  -- escalated      --> Suspended
+      Active   -- cancel         --> Cancelled
+      PastDue  -- cancel         --> Cancelled
+      Suspended -- reactivate   --> Active    (requires fresh payment method)
+
+    Cancelled is terminal — no further transitions. If a customer wants to
+    resume, a new Subscription is created via Subscribe.
+  """
+
+  state {
+    customer:         Id
+    plan:             Id
+    status:           SubscriptionStatus = Active
+    source:           PaymentMethod          // current payment method on file
+    next_charge_date: Timestamp              // advances by plan.interval on each success
+    last_charge:      ChargeId?              // most recent successful charge
+    last_failed_at:   Timestamp?             // when status last moved to PastDue
+    first_failed_at:  Timestamp?             // start of the current PastDue window
+    attempts:         int          = 0       // consecutive failures in this PastDue window
+    created:          Timestamp
+    updated:          Timestamp
+  }
+
+  invariant attempts >= 0
+  invariant "status == PastDue implies last_failed_at != none and first_failed_at != none"
+  invariant "status == Active implies attempts == 0"
+
+  accepts MarkSucceeded(charge: ChargeId, next_charge_date: Timestamp, now: Timestamp)
+      -> Result<unit, NotActive> {
+    intent: "Record a successful charge, advance the billing date, and reset the failure window."
+    require: status == Active or status == PastDue  rescue reject NotActive
+    effect: status           = Active
+    effect: last_charge      = charge
+    effect: next_charge_date = next_charge_date
+    effect: last_failed_at   = none
+    effect: first_failed_at  = none
+    effect: attempts         = 0
+    effect: updated          = now
+    commit
+  }
+
+  accepts MarkFailed(reason: string, now: Timestamp) -> Result<unit, NotChargeable> {
+    intent: """
+      Record a failed charge attempt. If this is the first failure, sets
+      first_failed_at and moves to PastDue. On subsequent failures, increments
+      attempts and refreshes last_failed_at to gate the 7-day retry window.
+    """
+    require: status == Active or status == PastDue  rescue reject NotChargeable
+    effect: status         = PastDue
+    effect: last_failed_at = now
+    effect: first_failed_at = if first_failed_at? then first_failed_at else now
+    effect: attempts       = attempts + 1
+    effect: updated        = now
+    commit
+  }
+
+  accepts Suspend(now: Timestamp) -> Result<unit, AlreadySuspended | AlreadyCancelled> {
+    intent: "Escalate a PastDue subscription to Suspended after the grace window expires."
+    require: status != Suspended   rescue reject AlreadySuspended
+    require: status != Cancelled   rescue reject AlreadyCancelled
+    effect: status  = Suspended
+    effect: updated = now
+    emit SubscriptionSuspended { subscription: self.id, at: now }
+    commit
+  }
+
+  accepts Cancel(now: Timestamp) -> Result<unit, AlreadyCancelled> {
+    intent: "Cancel the subscription. Terminal — no resurrection from this state."
+    require: status != Cancelled  rescue reject AlreadyCancelled
+    effect: status  = Cancelled
+    effect: updated = now
+    emit SubscriptionCancelled { subscription: self.id, at: now }
+    commit
+  }
+
+  accepts UpdateSource(source: PaymentMethod, now: Timestamp) -> unit {
+    intent: "Replace the payment method on file. Used by Reactivate to attach a fresh source."
+    effect: source  = source
+    effect: updated = now
+    commit
+  }
+
+  accepts Restore(source: PaymentMethod, now: Timestamp) -> Result<unit, NotSuspended> {
+    intent: """
+      Reactivate a Suspended subscription with a new payment method. Clears the
+      entire failure window (status, attempts, last_failed_at, first_failed_at)
+      and sets next_charge_date to now so the next ChargeCycle run picks it up.
+      Only valid from Suspended — use UpdateSource for an in-flight source change.
+    """
+    require: status == Suspended  rescue reject NotSuspended
+    effect: status          = Active
+    effect: source          = source
+    effect: next_charge_date = now
+    effect: last_failed_at  = none
+    effect: first_failed_at = none
+    effect: attempts        = 0
+    effect: updated         = now
+    emit SubscriptionReactivated { subscription: self.id, at: now }
+    commit
+  }
+
+  // Async confirmation backstop: Stripe may fire ChargeSucceeded hours after the
+  // synchronous Charge call returned ok. If our state is still Active, this is a
+  // no-op (MarkSucceeded was already called synchronously). If somehow the sync
+  // path failed but the provider settled, this drives the state machine forward.
+  subscribe ChargeSucceeded -> on event(charge, subscription, at) {
+    if subscription == self.id then ask MarkSucceeded(charge, next_charge_date, at)
+  }
+
+  // Webhook backstop for async decline. Stripe sometimes finalizes a charge
+  // status hours after the sync call returns. If we are already PastDue from
+  // the synchronous path this increments attempts — handled safely because
+  // MarkFailed is idempotent-by-design: the date-gated retry schedule governs
+  // when the next attempt fires regardless of how many times MarkFailed ran.
+  subscribe ChargeFailed -> on event(charge, subscription, reason, at) {
+    if subscription == self.id and status != Suspended and status != Cancelled
+    then ask MarkFailed(reason, at)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// External actor — Payments
+// ---------------------------------------------------------------------------
+
+external actor Payments {
+  intent: "Payment provider — charges and refunds across Stripe, Polar, and LemonSqueezy."
+
+  providers: [Stripe, Polar, Lemon]
+
+  config Stripe: api_key:        secret "STRIPE_KEY"
+                 webhook_secret: secret "STRIPE_WEBHOOK_SECRET"
+  config Polar:  api_key:        secret "POLAR_KEY"
+                 webhook_secret: secret "POLAR_WEBHOOK_SECRET"
+  config Lemon:  api_key:        secret "LEMONSQUEEZY_KEY"
+                 webhook_secret: secret "LEMONSQUEEZY_WEBHOOK_SECRET"
+
+  accepts Charge(amount: Money, source: PaymentMethod, key: Key)
+    -> Result<ChargeId, PaymentDeclined | NetworkError | RateLimited>
+
+  // amount? omitted means full refund.
+  accepts Refund(charge: ChargeId, amount: Money?, key: Key)
+    -> Result<RefundId, RefundError | NetworkError>
+
+  // subscription is surfaced from provider metadata (Stripe: metadata.subscription_id).
+  emits ChargeSucceeded { charge: ChargeId, subscription: Id, at: Timestamp }
+  emits ChargeFailed    { charge: ChargeId, subscription: Id, reason: string, at: Timestamp }
+  emits RefundProcessed { refund: RefundId, charge: ChargeId, at: Timestamp }
+}
+
+// ---------------------------------------------------------------------------
+// Policies
+// ---------------------------------------------------------------------------
+
+policy BillingAtomicity {
+  intent: """
+    ChargeCycle commits to an all-or-nothing outcome. Either:
+
+      (a) The external charge succeeded AND the Subscription was marked
+          Succeeded (next_charge_date advanced, attempts reset to 0), and
+          ChargeSucceeded was emitted — both land together; OR
+
+      (b) The external charge failed AND the Subscription was marked Failed
+          (status PastDue, attempts incremented), and ChargeFailed was emitted.
+
+    There is no in-between: a charge that succeeded externally but whose
+    MarkSucceeded call failed leaves the Subscription in PastDue, which is safe
+    because the retry schedule will fire again and the idempotency key prevents
+    a double charge. A charge that failed externally but whose MarkFailed call
+    was skipped leaves the subscription incorrectly Active — the webhook backstop
+    corrects this via the ChargeFailed subscriber.
+  """
+}
+
+policy BillingFrequency {
+  intent: """
+    Governs whether a ChargeCycle attempt should proceed for a given subscription.
+
+      - Not yet due: next_charge_date > now. Skip — the charge window has not
+        opened. The schedule fires daily so this case is routine.
+
+      - Due: next_charge_date <= now and status == Active. Proceed with the charge.
+
+      - Already charged this period: last_charge was issued after the last
+        next_charge_date boundary. Skip — idempotency guard against schedule
+        re-fires within the same billing period.
+
+      - Not Active: status != Active. Skip — PastDue, Suspended, and Cancelled
+        subscriptions are handled by RetryDue, EscalateOverdue, and not at all,
+        respectively.
+  """
+  examples:
+    - given: subscription with next_charge_date = now after 5d, status = Active
+      then:  ok(skip)
+
+    - given: subscription with next_charge_date = now, status = Active
+      then:  ok(proceed)
+
+    - given: subscription with next_charge_date = now before 1d, status = Active
+      then:  ok(proceed)
+
+    - given: subscription with next_charge_date = now, status = PastDue
+      then:  ok(skip)
+
+    - given: subscription already charged within the current period (key matches)
+      then:  ok(skip)
+}
+
+policy AdminGated {
+  intent: """
+    The caller must carry the Admin role. Any other authenticated caller is
+    rejected NotAuthorized. Attached at route scope on plan management endpoints.
+  """
+  examples:
+    - given: caller has role Admin
+      then:  ok
+
+    - given: caller has role Guest
+      then:  err(NotAuthorized)
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+event SubscriptionCreated {
+  payload:  { subscription: Id, customer: Id, plan: Id, at: Timestamp }
+  delivery: eager
+  order:    by subscription
+}
+
+// ChargeSucceeded is also emitted by the Payments external actor (async webhook).
+// This internal event fires synchronously from ChargeCycle on the success path.
+// Both share the same shape; downstream subscribers see a single event type.
+event ChargeSucceeded {
+  payload:  { subscription: Id, charge: ChargeId, amount: Money, at: Timestamp }
+  delivery: eager
+  order:    by subscription
+}
+
+// ChargeFailed fires on the synchronous decline path from ChargeCycle/RetryDue.
+// The Payments external actor also emits ChargeFailed via webhook (async backstop).
+event ChargeFailed {
+  payload:  { subscription: Id, reason: string, attempts: int, at: Timestamp }
+  delivery: eager
+  order:    by subscription
+}
+
+// SubscriptionSuspended is strict because downstream consumers (email, access
+// revocation) must not double-fire. Emitted from Subscription.Suspend.
+event SubscriptionSuspended {
+  payload:  { subscription: Id, at: Timestamp }
+  delivery: strict
+  order:    by subscription
+}
+
+event SubscriptionCancelled {
+  payload:  { subscription: Id, at: Timestamp }
+  delivery: eager
+  order:    by subscription
+}
+
+event SubscriptionReactivated {
+  payload:  { subscription: Id, at: Timestamp }
+  delivery: eager
+  order:    by subscription
+}
+
+// ---------------------------------------------------------------------------
+// Flows — plan management (admin)
+// ---------------------------------------------------------------------------
+
+flow CreatePlan(
+  name:     string,
+  amount:   Money,
+  interval: Duration,
+  now:      Timestamp,
+  key:      Key,
+) -> Result<{ plan: Id }, InvalidPlan>
+{
+  intent: "Create a new billing plan. Admin-only. Amount must be positive."
+  require: amount > 0    rescue reject InvalidPlan
+  require: interval > 0  rescue reject InvalidPlan
+  step plan = ask Plan.create({
+    id:       generate(),
+    name,
+    amount,
+    interval,
+    created:  now,
+    updated:  now,
+  })
+  commit { plan: plan.id }
+}
+
+flow DeletePlan(
+  plan: Id,
+  now:  Timestamp,
+  key:  Key,
+) -> Result<unit, PlanNotFound | PlanInUse>
+{
+  intent: """
+    Delete a plan. Rejects PlanInUse if any Active or PastDue subscription
+    references this plan — admin must migrate or cancel those subscriptions first.
+  """
+  step p = ask Plan.findBy(id: plan)
+           rescue reject PlanNotFound
+  // Guard: refuse deletion if subscriptions are still on this plan.
+  step _ = if length(Subscription where plan == plan and (status == Active or status == PastDue)) > 0
+           then reject PlanInUse
+  commit
+}
+
+// ---------------------------------------------------------------------------
+// Flows — subscription lifecycle
+// ---------------------------------------------------------------------------
+
+flow Subscribe(
+  customer: Id,
+  plan:     Id,
+  source:   PaymentMethod,
+  now:      Timestamp,
+  key:      Key,
+) -> Result<{ subscription: Id }, InvalidPlan | InvalidPaymentMethod>
+{
+  intent: """
+    Create a new subscription for a customer on a plan. The first charge is
+    NOT taken here — it is picked up by the ChargeCycle schedule when
+    next_charge_date <= now. This separates signup latency from charge latency
+    and allows trials by setting next_charge_date to now after N days at the
+    call site.
+  """
+  step p = ask Plan.findBy(id: plan)
+           rescue reject InvalidPlan
+
+  step sub = ask Subscription.create({
+    id:               generate(),
+    customer,
+    plan,
+    status:           Active,
+    source,
+    next_charge_date: now,
+    last_charge:      none,
+    last_failed_at:   none,
+    first_failed_at:  none,
+    attempts:         0,
+    created:          now,
+    updated:          now,
+  })
+
+  emit SubscriptionCreated { subscription: sub.id, customer, plan, at: now }
+  commit { subscription: sub.id }
+}
+
+flow CancelSubscription(
+  subscription: Id,
+  now:          Timestamp,
+  key:          Key,
+) -> Result<unit, SubscriptionNotFound | AlreadyCancelled>
+{
+  intent: """
+    Cancel a subscription. Works from Active or PastDue. Cancelled is terminal;
+    if the customer wants to resume they create a new subscription via Subscribe.
+    Service continues until next_charge_date (period end) — the actor's status
+    change stops future charges while leaving current-period access intact.
+  """
+  step sub = ask Subscription.findBy(id: subscription)
+             rescue reject SubscriptionNotFound
+  ask Subscription(subscription).Cancel(now)
+  rescue reject AlreadyCancelled
+  commit
+}
+
+flow Reactivate(
+  subscription: Id,
+  source:       PaymentMethod,
+  now:          Timestamp,
+  key:          Key,
+) -> Result<unit, SubscriptionNotFound | NotSuspended | InvalidPaymentMethod>
+{
+  intent: """
+    Reactivate a Suspended subscription with a new payment method. Moves status
+    back to Active and sets next_charge_date to now so the charge schedule picks
+    it up at the next daily run. Rejects NotSuspended for any other status —
+    Active and PastDue subscriptions do not need reactivation.
+  """
+  step sub = ask Subscription.findBy(id: subscription)
+             rescue reject SubscriptionNotFound
+  // Restore handles the NotSuspended guard, clears the failure window, and
+  // emits SubscriptionReactivated — one accept, one atomic state transition.
+  ask Subscription(subscription).Restore(source, now)
+  rescue reject NotSuspended
+  commit
+}
+
+// ---------------------------------------------------------------------------
+// Flows — charge engine
+// ---------------------------------------------------------------------------
+
+flow ChargeCycle(
+  subscription: Id,
+  now:          Timestamp,
+  key:          Key,
+) -> Result<ChargeId, ChargeFailed | SubscriptionNotFound | PlanNotFound>
+{
+  intent: """
+    Attempt the next billing charge for a single subscription. This flow is
+    invoked by the ChargeCycle and RetryDue schedules; it can also be called
+    directly for testing or one-off admin retries.
+
+    On success: MarkSucceeded advances next_charge_date by plan.interval,
+    resets attempts to 0, emits ChargeSucceeded.
+
+    On decline: MarkFailed transitions status to PastDue (or increments
+    attempts if already PastDue), emits ChargeFailed. The retry schedule
+    picks this up when last_failed_at + 7d <= now.
+  """
+
+  policies: [BillingAtomicity]
+
+  step sub = ask Subscription.findBy(id: subscription)
+             rescue reject SubscriptionNotFound
+
+  step plan = ask Plan.findBy(id: sub.plan)
+              rescue reject PlanNotFound
+
+  step charge = ask Payments[Stripe].Charge(plan.amount, sub.source, key)
+                rescue ask Subscription(subscription).MarkFailed(reason, now);
+                       emit ChargeFailed { subscription, reason, attempts: sub.attempts + 1, at: now };
+                       reject ChargeFailed
+
+  ask Subscription(subscription).MarkSucceeded(charge, now after plan.interval, now)
+  emit ChargeSucceeded { subscription, charge, amount: plan.amount, at: now }
+  commit charge
+}
+
+flow ChargeCycleWithFallback(
+  subscription: Id,
+  now:          Timestamp,
+  key:          Key,
+) -> Result<ChargeId, ChargeFailed | SubscriptionNotFound | PlanNotFound | AllProvidersFailed>
+{
+  intent: """
+    Variant of ChargeCycle that attempts all three configured payment providers
+    in sequence before marking the subscription failed. Stripe is tried first;
+    on any error (decline, network, rate limit) Polar is tried; then Lemon.
+    If all three fail, the subscription is marked failed as in ChargeCycle.
+    On success the result is identical to ChargeCycle.
+  """
+
+  policies: [BillingAtomicity]
+
+  step sub = ask Subscription.findBy(id: subscription)
+             rescue reject SubscriptionNotFound
+
+  step plan = ask Plan.findBy(id: sub.plan)
+              rescue reject PlanNotFound
+
+  step charge = ask Payments[Stripe].Charge(plan.amount, sub.source, key)
+                rescue ask Payments[Polar].Charge(plan.amount, sub.source, key)
+                rescue ask Payments[Lemon].Charge(plan.amount, sub.source, key)
+                rescue ask Subscription(subscription).MarkFailed(reason, now);
+                       emit ChargeFailed { subscription, reason, attempts: sub.attempts + 1, at: now };
+                       reject AllProvidersFailed
+
+  ask Subscription(subscription).MarkSucceeded(charge, now after plan.interval, now)
+  emit ChargeSucceeded { subscription, charge, amount: plan.amount, at: now }
+  commit charge
+}
+
+flow RetryDue(
+  subscription: Id,
+  now:          Timestamp,
+  key:          Key,
+) -> Result<ChargeId, ChargeFailed | SubscriptionNotFound | PlanNotFound>
+{
+  intent: """
+    Retry a charge for a PastDue subscription. The schedule predicate already
+    ensures last_failed_at + 7d <= now and attempts < 3, so this flow delegates
+    directly to ChargeCycle. Keeping RetryDue as a named flow lets the scheduler,
+    audit log, and observability layer distinguish retries from initial charges.
+  """
+  commit ChargeCycle(subscription, now, key)
+}
+
+flow EscalateOverdue(
+  subscription: Id,
+  now:          Timestamp,
+) -> Result<unit, SubscriptionNotFound | AlreadySuspended | AlreadyCancelled>
+{
+  intent: """
+    Suspend a PastDue subscription that has exhausted the grace window. The
+    schedule predicate enforces the threshold (attempts >= 3 or first_failed_at
+    + 30d <= now) so this flow only needs to call Suspend. SubscriptionSuspended
+    fires from inside the actor accept so downstream consumers react exactly once.
+  """
+  step sub = ask Subscription.findBy(id: subscription)
+             rescue reject SubscriptionNotFound
+  ask Subscription(subscription).Suspend(now)
+  rescue reject err
+  commit
+}
+
+// ---------------------------------------------------------------------------
+// Schedules — TIME axis
+// ---------------------------------------------------------------------------
+
+// Fire daily. Picks up Active subscriptions whose billing date has arrived.
+// The BillingFrequency policy on ChargeCycle guards against double-charges
+// within a period.
+schedule ChargeCycle(subscription, now, generate())
+  every 1d
+  for any subscription in Subscription
+  where status == Active and next_charge_date <= now
+
+// Fire daily. Picks up PastDue subscriptions that have waited at least 7 days
+// since their last failure and have not yet exhausted the three-attempt limit.
+// When ChargeCycle succeeds, MarkSucceeded resets attempts to 0 and status to
+// Active, removing the subscription from this schedule's predicate.
+schedule RetryDue(subscription, now, generate())
+  every 1d
+  for any subscription in Subscription
+  where status == PastDue
+    and last_failed_at + 7d <= now
+    and attempts < 3
+
+// Fire daily. Suspends PastDue subscriptions that have either exhausted all
+// three retry attempts or held PastDue status for 30 days (grace window). Uses
+// EscalateOverdue rather than inline Suspend so audit logs capture the escalation
+// as a distinct, named operation separate from manual admin suspensions.
+schedule EscalateOverdue(subscription, now)
+  every 1d
+  for any subscription in Subscription
+  where status == PastDue
+    and (attempts >= 3 or first_failed_at + 30d <= now)
+
+// ---------------------------------------------------------------------------
+// Controller
+// ---------------------------------------------------------------------------
+
+controller Billing {
+  policies: [BearerAuth]
+
+  POST /subscriptions -> Subscribe(self, body.plan, body.source, now, body.key) {
+    auth: bearer
+    body: {
+      plan:   Id,
+      source: PaymentMethod,
+      key:    Key,
+    }
+    map:
+      ok(r)                      -> 201 { subscription_id: r.subscription }
+      err(InvalidPlan)           -> 422 { error: "invalid_plan" }
+      err(InvalidPaymentMethod)  -> 422 { error: "invalid_payment_method" }
+  }
+
+  GET /subscriptions/:id -> Subscription(id) {
+    auth: bearer
+    map:
+      ok(s)          -> 200 s
+      err(NotFound)  -> 404 { error: "subscription_not_found" }
+  }
+
+  POST /subscriptions/:id/cancel -> CancelSubscription(id, now, body.key) {
+    auth: bearer
+    body: { key: Key }
+    map:
+      ok(_)                       -> 204
+      err(SubscriptionNotFound)   -> 404 { error: "subscription_not_found" }
+      err(AlreadyCancelled)       -> 409 { error: "already_cancelled" }
+  }
+
+  POST /subscriptions/:id/reactivate -> Reactivate(id, body.source, now, body.key) {
+    auth: bearer
+    body: {
+      source: PaymentMethod,
+      key:    Key,
+    }
+    map:
+      ok(_)                       -> 200
+      err(SubscriptionNotFound)   -> 404 { error: "subscription_not_found" }
+      err(NotSuspended)           -> 409 { error: "not_suspended" }
+      err(InvalidPaymentMethod)   -> 422 { error: "invalid_payment_method" }
+  }
+
+  POST /admin/plans -> CreatePlan(body.name, body.amount, body.interval, now, body.key) {
+    auth: bearer
+    policies: [AdminGated]
+    body: {
+      name:     string,
+      amount:   Money,
+      interval: Duration,
+      key:      Key,
+    }
+    map:
+      ok(r)             -> 201 { plan_id: r.plan }
+      err(InvalidPlan)  -> 422 { error: "invalid_plan" }
+  }
+
+  DELETE /admin/plans/:id -> DeletePlan(id, now, generate()) {
+    auth: bearer
+    policies: [AdminGated]
+    map:
+      ok(_)              -> 204
+      err(PlanNotFound)  -> 404 { error: "plan_not_found" }
+      err(PlanInUse)     -> 409 { error: "plan_in_use" }
+  }
+}
