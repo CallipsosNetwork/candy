@@ -3,24 +3,24 @@
 prose {
   intent: """
     A Booking is the binding agreement between a guest and a host for a specific
-    listing over a specific date range at an agreed total price. It is the central
+    listing over a specific time range at an agreed total price. It is the central
     entity in the marketplace: it references a listing, carries the guest and host
-    identities, the reserved dates, the total charge, any applied coupon discount,
-    and the lifecycle status from Pending through Confirmed, Cancelled, and
-    Completed.
+    identities, the reserved time slot, the total charge, any applied coupon
+    discount, and the lifecycle status from Pending through Confirmed, Cancelled,
+    and Completed.
 
     PlaceBooking is a saga because it touches multiple owned actors and one external
     network boundary in a single logical operation. It must: (1) hold the listing's
-    calendar dates so no other booking can claim them, (2) validate and redeem a
+    calendar slot so no other booking can claim it, (2) validate and redeem a
     coupon if the guest provided one, (3) charge the guest's payment method via the
     Payments external actor, and (4) create the Booking record itself. Any of these
     steps can fail — the listing may be unavailable, the coupon may be expired, the
     card may decline. A saga with named steps allows each failure to compensate the
-    prior successful steps, leaving the system in a clean state with no dangling holds
-    or phantom charges.
+    prior successful steps, leaving the system in a clean state with no dangling
+    holds or phantom charges.
 
     Compensation is explicit in this file: each rescue clause calls the inverse
-    operation directly (ReleaseDates, Refund, RestoreCoupon) rather than relying on
+    operation directly (ReleaseSlot, Refund, RestoreCoupon) rather than relying on
     implicit platform wiring. The explicitness is intentional — it makes the rollback
     story visible and auditable alongside the forward path.
 
@@ -31,15 +31,21 @@ prose {
     ChargeFailed it auto-cancels. This dual-path design means a booking placed in
     Pending state always reaches a terminal status — the saga's sync charge is the
     fast path and the webhook subscription is the backstop.
+
+    The SendBookingReminder schedule fires every minute and picks up Confirmed
+    bookings whose start time is within the next 60 seconds. It emits
+    BookingReminderDue so an external notifications subscriber can react. This
+    exercises the TIME-axis schedule pattern alongside the webhook subscribe pattern.
   """
 
   exports:
     actor Booking
-    flow  PlaceBooking, PlaceBookingWithFallback, CancelBooking, CompleteBooking
-    event BookingPlaced, BookingConfirmed, BookingCancelled
+    flow  PlaceBooking, PlaceBookingWithFallback, CancelBooking, CompleteBooking,
+          SendBookingReminder
+    event BookingPlaced, BookingConfirmed, BookingCancelled, BookingReminderDue
 
   uses:
-    feature listings  for HoldDates, ReleaseDates
+    feature listings  for HoldSlot, ReleaseSlot
     feature coupons   for ValidateCoupon, RedeemCoupon, RestoreCoupon
     external Payments for Charge, Refund, Transfer
     external Payments for event ChargeSucceeded, ChargeFailed
@@ -52,12 +58,13 @@ prose {
 // ---------------------------------------------------------------------------
 
 // CancellationReason is guest-provided free text on a cancel request.
-// Shared types (BookingStatus, Money, DateRange, ChargeId, RefundId, etc.) live
+// Shared types (BookingStatus, Money, TimeRange, ChargeId, RefundId, etc.) live
 // in types.candy and are not redeclared here.
 type CancellationReason string { max: 500 }
 
 // CancellationWindow is the output of CancellationPolicy: which tier applies
 // based on how far in the future check-in is at the time of cancellation.
+// Test-mode thresholds are scaled to seconds, not hours — see CancellationPolicy.
 enum CancellationWindow { Free, Partial, NonRefundable }
 
 // ---------------------------------------------------------------------------
@@ -66,18 +73,19 @@ enum CancellationWindow { Free, Partial, NonRefundable }
 
 actor Booking(id: Id) {
   state {
-    listing:  Id
-    host:     Id          // denormalized from listing for fast invariant checks
-    guest:    Id
-    dates:    DateRange
-    status:   BookingStatus = Pending
-    total:    Money
-    discount: Money         = 0
-    coupon:   Id?           // present only when a coupon was redeemed
-    charge:   ChargeId?     // set when payment captures
-    refund:   RefundId?     // set on cancellation with a refund
-    created:  Timestamp
-    updated:  Timestamp
+    listing:       Id
+    host:          Id          // denormalized from listing for fast invariant checks
+    guest:         Id
+    dates:         TimeRange
+    status:        BookingStatus = Pending
+    total:         Money
+    discount:      Money         = 0
+    coupon:        Id?           // present only when a coupon was redeemed
+    charge:        ChargeId?     // set when payment captures
+    refund:        RefundId?     // set on cancellation with a refund
+    reminder_sent: bool          = false
+    created:       Timestamp
+    updated:       Timestamp
   }
 
   invariant total >= 0
@@ -86,7 +94,10 @@ actor Booking(id: Id) {
   invariant host == Listing(listing).host
   invariant dates.from < dates.to
 
-  derive nights = dates.to - dates.from
+  // duration yields a Duration (seconds). Codegen maps Timestamp subtraction
+  // to the runtime's duration arithmetic; the result is an integer count of
+  // seconds, consistent with the billing example's Duration type semantics.
+  derive duration = dates.to - dates.from
 
   accepts Confirm(charge: ChargeId, now: Timestamp) -> Result<unit, AlreadyConfirmed> {
     intent: """
@@ -132,6 +143,19 @@ actor Booking(id: Id) {
     commit
   }
 
+  accepts MarkReminderSent(now: Timestamp) -> unit {
+    intent: """
+      Idempotent accept called by SendBookingReminder after emitting
+      BookingReminderDue. Sets reminder_sent = true so the schedule predicate
+      excludes this booking from future runs. Safe to replay — if reminder_sent
+      is already true this is a no-op.
+    """
+    step already = if reminder_sent then commit
+    effect: reminder_sent = true
+    effect: updated       = now
+    commit
+  }
+
   // Async confirmation path: Payments fires ChargeSucceeded after the provider
   // settles. We match on booking id so each Booking instance only reacts to
   // its own charge event.
@@ -156,19 +180,22 @@ policy CancellationPolicy {
   intent: """
     Hosts and guests need a deterministic, published refund schedule so
     they can plan around cancellations. The policy divides time into three
-    windows measured from the current moment to the booking's check-in date
+    windows measured from the current moment to the booking's check-in time
     (dates.from):
 
-      - Free: more than 48 hours before check-in. The guest receives a full
-        refund. Cancelling far in advance costs neither party anything.
+      - Free: more than 60 seconds before check-in. The guest receives a full
+        refund. Cancelling in advance costs neither party anything.
 
-      - Partial: between 24 and 48 hours before check-in (inclusive of the
-        48h boundary, exclusive of the 24h boundary). The guest receives 50%
-        of the total. The host is compensated for the short notice.
+      - Partial: between 30 and 60 seconds before check-in (inclusive of the
+        60s boundary, exclusive of the 30s boundary). The guest receives 50%
+        of the total.
 
-      - NonRefundable: within 24 hours of check-in, or after check-in has
-        already started. No refund is issued. Hosts have already prepared and
-        last-minute cancellations cause real harm.
+      - NonRefundable: within 30 seconds of check-in, or after check-in has
+        already started. No refund is issued.
+
+    Test-mode note: production Airbnb thresholds are 48h (Free), 24h (Partial),
+    and 0h (NonRefundable). This example uses 60s / 30s so that cancel-window
+    transitions can be exercised in a single eval run without waiting hours.
 
     The policy also rejects BookingStarted if dates.from is already in the
     past — you cannot cancel a booking that has already begun through this
@@ -179,33 +206,33 @@ policy CancellationPolicy {
   """
   examples:
     - given: >
-        booking with dates.from = now after 30d (30 days out),
+        booking with dates.from = now after 120s (2 minutes out),
         cancellation requested at now
       then: ok(Free)
 
     - given: >
-        booking with dates.from = now after 36h (36 hours out),
+        booking with dates.from = now after 45s (between 30s and 60s out),
         cancellation requested at now
       then: ok(Partial)
 
     - given: >
-        booking with dates.from = now after 12h (12 hours out),
+        booking with dates.from = now after 10s (within 30s of check-in),
         cancellation requested at now
       then: ok(NonRefundable)
 
     - given: >
-        booking with dates.from = now after 25h (25 hours out, just past 24h
-        threshold), cancellation requested at now
+        booking with dates.from = now after 31s (just past 30s threshold),
+        cancellation requested at now
       then: ok(NonRefundable)
 
     - given: >
-        booking with dates.from = now after 48h (exactly 48h out),
-        cancellation requested at now (boundary is Free)
+        booking with dates.from = now after 60s (exactly 60s out, boundary is Free),
+        cancellation requested at now
       then: ok(Free)
 
     - given: >
-        booking with dates.from = now after 24h (exactly 24h out),
-        cancellation requested at now (boundary is NonRefundable)
+        booking with dates.from = now after 30s (exactly 30s out, boundary is NonRefundable),
+        cancellation requested at now
       then: ok(NonRefundable)
 
     - given: >
@@ -218,7 +245,7 @@ policy BookingAtomicity {
     PlaceBooking commits to an all-or-nothing outcome. Either:
 
       (a) The booking is in Pending status with all upstream side-effects fully
-          in place — the listing's calendar dates are held, the coupon (if used)
+          in place — the listing's calendar slot is held, the coupon (if used)
           is redeemed, and the payment has been captured — and the saga's commit
           block runs returning the new booking id and total; OR
 
@@ -253,6 +280,18 @@ event BookingCompleted {
   order:    by booking
 }
 
+// BookingReminderDue is emitted by the SendBookingReminder schedule flow 60s
+// before a Confirmed booking's start time. In a multi-feature setup, the
+// notifications feature would subscribe via:
+//   uses: feature booking for event BookingReminderDue
+// This keeps the reminder concern in booking and the delivery concern in
+// notifications — neither feature depends on the other's internals.
+event BookingReminderDue {
+  payload:  { booking: Id, listing: Id, guest: Id, dates: TimeRange, at: Timestamp }
+  delivery: eager
+  order:    by booking
+}
+
 // ---------------------------------------------------------------------------
 // Flows
 // ---------------------------------------------------------------------------
@@ -260,50 +299,53 @@ event BookingCompleted {
 flow PlaceBooking(
   listing: Id,
   guest:   Id,
-  dates:   DateRange,
+  dates:   TimeRange,
   source:  PaymentMethod,
   code:    CouponCode?,
   now:     Timestamp,
   key:     Key,
 ) -> Result<{ booking: Id, total: Money },
-             DatesUnavailable | CouponConflict | PaymentDeclined | InvalidBooking>
+             SlotUnavailable | CouponConflict | PaymentDeclined | InvalidBooking>
 {
   intent: """
-    The canonical booking saga. Holds listing dates, optionally validates and
-    redeems a coupon, charges the guest, and creates the Booking actor in Pending
-    status. Every step has an explicit compensation path: if any step fails, all
-    prior steps are undone in reverse order before the error is surfaced.
+    The canonical booking saga. Holds the listing's time slot, optionally
+    validates and redeems a coupon, charges the guest, and creates the Booking
+    actor in Pending status. Every step has an explicit compensation path: if
+    any step fails, all prior steps are undone in reverse order before the
+    error is surfaced.
   """
 
   policies: [BookingAtomicity]
 
   // 0. Pre-generate the booking id so every step (and every rescue) can refer
-  //    to it. This is the key that ties HoldDates to ReleaseDates and that
+  //    to it. This is the key that ties HoldSlot to ReleaseSlot and that
   //    Booking.create will use as its actor identity.
   step booking_id = generate()
 
-  // 1. Hold dates on the listing's calendar. If the dates are already taken or
-  //    the listing does not exist or is not Listed, reject immediately with no
-  //    side effects to clean up.
-  step held = ask listings.HoldDates(listing, dates, booking_id, key)
-              rescue reject DatesUnavailable
+  // 1. Hold the time slot on the listing's calendar. If the slot is already
+  //    taken or the listing does not exist or is not Listed, reject immediately
+  //    with no side effects to clean up.
+  step held = ask listings.HoldSlot(listing, dates, booking_id, key)
+              rescue reject SlotUnavailable
 
   // 2. Validate coupon if one was provided. This is a pure read — no state
-  //    change yet — so if it fails we only need to release the date hold.
+  //    change yet — so if it fails we only need to release the slot hold.
   step validated = if code?
                    then ask coupons.ValidateCoupon(code, guest, now)
-                        rescue ask listings.ReleaseDates(listing, dates, booking_id, key);
+                        rescue ask listings.ReleaseSlot(listing, dates, booking_id, key);
                                reject CouponConflict
                    else none
 
-  // 3. Read listing price and compute the total. Extract discount from the
-  //    validated coupon result if present.
+  // 3. Read listing price and compute the total. duration is a Duration
+  //    (integer seconds) derived from Timestamp subtraction. pricePerMinute
+  //    is Money per 60 seconds; total = pricePerMinute * (duration / 60).
   step listing_actor = ask Listing.findBy(id: listing)
-                       rescue ask listings.ReleaseDates(listing, dates, booking_id, key);
+                       rescue ask listings.ReleaseSlot(listing, dates, booking_id, key);
                               reject InvalidBooking
 
-  step nights     = dates.to - dates.from
-  step base_total = listing_actor.pricePerNight * nights
+  step duration   = dates.to - dates.from
+  step minutes    = duration / 60
+  step base_total = listing_actor.pricePerMinute * minutes
 
   step discount = if validated?
                   then if validated.kind == Percent
@@ -313,20 +355,20 @@ flow PlaceBooking(
 
   step total = base_total - discount
 
-  // 4. Charge the guest. If the charge fails, release the date hold and reject.
+  // 4. Charge the guest. If the charge fails, release the slot hold and reject.
   //    This is the canonical single-provider path; PlaceBookingWithFallback
   //    extends this step with a multi-provider rescue chain.
   step charge = ask Payments[Stripe].Charge(total, source, key)
-                rescue ask listings.ReleaseDates(listing, dates, booking_id, key);
+                rescue ask listings.ReleaseSlot(listing, dates, booking_id, key);
                        reject PaymentDeclined
 
   // 5. Redeem the coupon now that the charge has succeeded. If redemption fails
   //    (e.g. the coupon was exhausted by a concurrent booking between validate
-  //    and redeem), refund the charge and release the date hold.
+  //    and redeem), refund the charge and release the slot hold.
   step redeemed = if code?
                   then ask coupons.RedeemCoupon(code, guest, booking_id, now, key)
                        rescue ask Payments[Stripe].Refund(charge, none, key);
-                              ask listings.ReleaseDates(listing, dates, booking_id, key);
+                              ask listings.ReleaseSlot(listing, dates, booking_id, key);
                               reject CouponConflict
                   else unit
 
@@ -334,19 +376,20 @@ flow PlaceBooking(
   //    The actor will transition to Confirmed when the ChargeSucceeded webhook
   //    arrives (or stay Pending then auto-cancel on ChargeFailed).
   step booking = ask Booking.create({
-    id:       booking_id,
+    id:            booking_id,
     listing,
-    host:     listing_actor.host,
+    host:          listing_actor.host,
     guest,
     dates,
-    status:   Pending,
+    status:        Pending,
     total,
     discount,
-    coupon:   if validated? then validated.coupon else none,
-    charge:   charge,
-    refund:   none,
-    created:  now,
-    updated:  now,
+    coupon:        if validated? then validated.coupon else none,
+    charge:        charge,
+    refund:        none,
+    reminder_sent: false,
+    created:       now,
+    updated:       now,
   })
 
   emit BookingPlaced { booking: booking.id, listing, guest, dates, total, at: now }
@@ -356,13 +399,13 @@ flow PlaceBooking(
 flow PlaceBookingWithFallback(
   listing: Id,
   guest:   Id,
-  dates:   DateRange,
+  dates:   TimeRange,
   source:  PaymentMethod,
   code:    CouponCode?,
   now:     Timestamp,
   key:     Key,
 ) -> Result<{ booking: Id, total: Money, provider: string },
-             DatesUnavailable | CouponConflict | AllProvidersFailed | InvalidBooking>
+             SlotUnavailable | CouponConflict | AllProvidersFailed | InvalidBooking>
 {
   intent: """
     Variant of PlaceBooking that attempts all three configured payment providers
@@ -377,21 +420,22 @@ flow PlaceBookingWithFallback(
 
   step booking_id = generate()
 
-  step held = ask listings.HoldDates(listing, dates, booking_id, key)
-              rescue reject DatesUnavailable
+  step held = ask listings.HoldSlot(listing, dates, booking_id, key)
+              rescue reject SlotUnavailable
 
   step validated = if code?
                    then ask coupons.ValidateCoupon(code, guest, now)
-                        rescue ask listings.ReleaseDates(listing, dates, booking_id, key);
+                        rescue ask listings.ReleaseSlot(listing, dates, booking_id, key);
                                reject CouponConflict
                    else none
 
   step listing_actor = ask Listing.findBy(id: listing)
-                       rescue ask listings.ReleaseDates(listing, dates, booking_id, key);
+                       rescue ask listings.ReleaseSlot(listing, dates, booking_id, key);
                               reject InvalidBooking
 
-  step nights     = dates.to - dates.from
-  step base_total = listing_actor.pricePerNight * nights
+  step duration   = dates.to - dates.from
+  step minutes    = duration / 60
+  step base_total = listing_actor.pricePerMinute * minutes
 
   step discount = if validated?
                   then if validated.kind == Percent
@@ -402,11 +446,11 @@ flow PlaceBookingWithFallback(
   step total = base_total - discount
 
   // Try all three providers. The rescue chain falls through to the next provider
-  // on any error. If all three fail, compensate the date hold and reject.
+  // on any error. If all three fail, compensate the slot hold and reject.
   step charge = ask Payments[Stripe].Charge(total, source, key)
                 rescue ask Payments[Polar].Charge(total, source, key)
                 rescue ask Payments[Lemon].Charge(total, source, key)
-                rescue ask listings.ReleaseDates(listing, dates, booking_id, key);
+                rescue ask listings.ReleaseSlot(listing, dates, booking_id, key);
                        reject AllProvidersFailed
 
   // Identify which provider succeeded by tagging the charge result.
@@ -415,24 +459,25 @@ flow PlaceBookingWithFallback(
   step redeemed = if code?
                   then ask coupons.RedeemCoupon(code, guest, booking_id, now, key)
                        rescue ask Payments[Stripe].Refund(charge, none, key);
-                              ask listings.ReleaseDates(listing, dates, booking_id, key);
+                              ask listings.ReleaseSlot(listing, dates, booking_id, key);
                               reject CouponConflict
                   else unit
 
   step booking = ask Booking.create({
-    id:       booking_id,
+    id:            booking_id,
     listing,
-    host:     listing_actor.host,
+    host:          listing_actor.host,
     guest,
     dates,
-    status:   Pending,
+    status:        Pending,
     total,
     discount,
-    coupon:   if validated? then validated.coupon else none,
-    charge:   charge,
-    refund:   none,
-    created:  now,
-    updated:  now,
+    coupon:        if validated? then validated.coupon else none,
+    charge:        charge,
+    refund:        none,
+    reminder_sent: false,
+    created:       now,
+    updated:       now,
   })
 
   emit BookingPlaced { booking: booking.id, listing, guest, dates, total, at: now }
@@ -450,7 +495,7 @@ flow CancelBooking(
     Cancel a booking and issue the appropriate refund based on the cancellation
     window. The refund tier is determined by CancellationPolicy. After refunding
     (if any), the coupon is restored (if one was redeemed), the listing calendar
-    dates are released, and the Booking actor is moved to Cancelled status.
+    slot is released, and the Booking actor is moved to Cancelled status.
     All operations after the policy check are idempotent on key.
   """
 
@@ -484,8 +529,8 @@ flow CancelBooking(
   step _ = if b.coupon?
            then ask coupons.RestoreCoupon(b.coupon, booking, key)
 
-  // 7. Release the calendar hold for these dates.
-  step _ = ask listings.ReleaseDates(b.listing, b.dates, booking, key)
+  // 7. Release the calendar slot for these dates.
+  step _ = ask listings.ReleaseSlot(b.listing, b.dates, booking, key)
 
   // 8. Mark the booking cancelled.
   step _ = ask Booking(booking).SetCancelled(reason, refund_id, now)
@@ -534,6 +579,68 @@ flow CompleteBooking(
   commit { transfer }
 }
 
+// SendBookingReminder is invoked by the schedule below for each Confirmed
+// booking whose start time is within the next 60 seconds. It emits
+// BookingReminderDue so a notifications subscriber can dispatch an email or
+// SMS without booking needing to know about notification delivery.
+//
+// In a multi-feature project the notifications feature would declare:
+//   uses: feature booking for event BookingReminderDue
+// and subscribe to it with its own delivery logic (Postmark, SendGrid, etc.).
+flow SendBookingReminder(
+  booking: Id,
+  now:     Timestamp,
+  key:     Key,
+) -> unit
+{
+  intent: """
+    Emit BookingReminderDue for a Confirmed booking whose start is imminent,
+    then mark the booking so the schedule does not fire again for the same
+    booking. The flow is idempotent on key and on reminder_sent — replaying
+    a completed reminder is a silent no-op.
+  """
+
+  step b = ask Booking.findBy(id: booking)
+           rescue commit  // booking was deleted between schedule eval and now; safe to skip
+
+  // Guard: skip if already reminded or no longer Confirmed.
+  step _ = if b.reminder_sent or b.status != Confirmed then commit
+
+  emit BookingReminderDue {
+    booking: b.id,
+    listing: b.listing,
+    guest:   b.guest,
+    dates:   b.dates,
+    at:      now,
+  }
+
+  ask Booking(booking).MarkReminderSent(now)
+  commit
+}
+
+// ---------------------------------------------------------------------------
+// Schedule — reminder 60s before check-in (TIME axis)
+// ---------------------------------------------------------------------------
+
+// Fire every minute. Picks up Confirmed bookings whose start time falls within
+// the 60-second window [now, now + 60s) and whose reminder has not yet been
+// sent. The predicate uses dates.from - 60s <= now to mean "start is at most
+// 60 seconds from now"; combined with now < dates.from it excludes bookings
+// that have already begun. reminder_sent == false prevents re-firing after the
+// first delivery.
+//
+// In eval mode bookings are typically 5–60 minutes long, so this fires once
+// per booking in the final minute before check-in — equivalent to a 2-day-out
+// reminder in a production day-granular system but exercisable in a single
+// minute-long eval run.
+schedule SendBookingReminder(booking, now, generate())
+  every 1m
+  for any booking in Booking
+  where status == Confirmed
+    and dates.from - 60s <= now
+    and now < dates.from
+    and reminder_sent == false
+
 // ---------------------------------------------------------------------------
 // Controller
 // ---------------------------------------------------------------------------
@@ -567,14 +674,14 @@ controller Bookings {
     policies: [RoleGated(Guest)]
     body: {
       listing:          Id,
-      dates:            DateRange,
+      dates:            TimeRange,
       source:           PaymentMethod,
       code:             CouponCode?,
       idempotency_key:  Key,
     }
     map:
       ok(r)                          -> 201 { booking_id: r.booking, total: r.total }
-      err(DatesUnavailable)          -> 409 { error: "dates_unavailable" }
+      err(SlotUnavailable)           -> 409 { error: "slot_unavailable" }
       err(CouponConflict)            -> 422 { error: "coupon_conflict" }
       err(PaymentDeclined)           -> 402 { error: "payment_declined" }
       err(InvalidBooking reason)     -> 422 { error: "invalid_booking", reason }
@@ -585,14 +692,14 @@ controller Bookings {
     policies: [RoleGated(Guest)]
     body: {
       listing:          Id,
-      dates:            DateRange,
+      dates:            TimeRange,
       source:           PaymentMethod,
       code:             CouponCode?,
       idempotency_key:  Key,
     }
     map:
       ok(r)                          -> 201 { booking_id: r.booking, total: r.total, provider: r.provider }
-      err(DatesUnavailable)          -> 409 { error: "dates_unavailable" }
+      err(SlotUnavailable)           -> 409 { error: "slot_unavailable" }
       err(CouponConflict)            -> 422 { error: "coupon_conflict" }
       err(AllProvidersFailed)        -> 502 { error: "all_providers_failed" }
       err(InvalidBooking reason)     -> 422 { error: "invalid_booking", reason }

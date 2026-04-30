@@ -3,20 +3,20 @@ prose {
   intent: """
     Listings owns the Listing and Calendar actors. A Listing is a host's
     property record — title, location, pricing, guest cap, and lifecycle
-    status (Draft → Listed → Hidden). A Calendar is the day-by-day held-set
-    for a listing; it tracks which dates are reserved by which booking so
-    the booking saga can atomically hold and release date ranges without
-    double-booking.
+    status (Draft → Listed → Hidden). A Calendar is the minute-granular
+    held-set for a listing; it tracks which TimeRanges are reserved by
+    which booking so the booking saga can atomically hold and release
+    time slots without double-booking.
 
     The booking feature depends on this feature exclusively through two
-    exported flows: HoldDates and ReleaseDates. Both are idempotent on key.
+    exported flows: HoldSlot and ReleaseSlot. Both are idempotent on key.
     All other flows are host-facing CRUD. ListListings is public and supports
-    availability filtering so guests can search open date ranges.
+    availability filtering so guests can search open time ranges.
   """
 
   exports:
     actor Listing, Calendar
-    flow  CreateListing, UpdateListing, ListListings, HoldDates, ReleaseDates
+    flow  CreateListing, UpdateListing, ListListings, HoldSlot, ReleaseSlot
     event ListingCreated, ListingUpdated, ListingHidden
 
   uses:
@@ -27,25 +27,27 @@ prose {
 
 enum ListingFilter { All, Listed, ByHost, AvailableInRange }
 
+// HeldEntry tracks a single contiguous time slot reserved by a booking.
+// slot is a TimeRange (from, to) keyed on minute-granular Timestamps.
 type HeldEntry {
-  date:    Date
+  slot:    TimeRange
   booking: Id
 }
 
 actor Listing(id: Id) {
   state {
-    host:          Id
-    title:         string
-    description:   string
-    location:      string
-    pricePerNight: Money
-    maxGuests:     int
-    status:        ListingStatus = Draft
-    created:       Timestamp
-    updated:       Timestamp
+    host:           Id
+    title:          string
+    description:    string
+    location:       string
+    pricePerMinute: Money
+    maxGuests:      int
+    status:         ListingStatus = Draft
+    created:        Timestamp
+    updated:        Timestamp
   }
 
-  invariant pricePerNight > 0
+  invariant pricePerMinute > 0
   invariant maxGuests >= 1
   invariant maxGuests <= 16
   invariant "title max 200 characters"
@@ -55,30 +57,30 @@ actor Listing(id: Id) {
   derive listed = status == Listed
 
   accepts UpdateMeta(
-    title:         string?,
-    description:   string?,
-    location:      string?,
-    pricePerNight: Money?,
-    maxGuests:     int?,
-    now:           Timestamp,
+    title:          string?,
+    description:    string?,
+    location:       string?,
+    pricePerMinute: Money?,
+    maxGuests:      int?,
+    now:            Timestamp,
   ) -> Result<unit, InvalidUpdate> {
     intent: "Apply any supplied optional fields and advance the updated timestamp."
-    effect: title         = title         if title         else self.title
-    effect: description   = description   if description   else self.description
-    effect: location      = location      if location      else self.location
-    effect: pricePerNight = pricePerNight if pricePerNight else self.pricePerNight
-    effect: maxGuests     = maxGuests     if maxGuests     else self.maxGuests
-    effect: updated       = now
+    effect: title          = title          if title          else self.title
+    effect: description    = description    if description    else self.description
+    effect: location       = location       if location       else self.location
+    effect: pricePerMinute = pricePerMinute if pricePerMinute else self.pricePerMinute
+    effect: maxGuests      = maxGuests      if maxGuests      else self.maxGuests
+    effect: updated        = now
     emit ListingUpdated { listing: self.id, at: now }
     commit
   }
 
   accepts Publish(now: Timestamp) -> Result<unit, AlreadyListed | DraftIncomplete> {
-    intent: "Transition a Draft listing to Listed. Requires title, description, and pricePerNight."
+    intent: "Transition a Draft listing to Listed. Requires title, description, and pricePerMinute."
     require: status != Listed                               rescue reject AlreadyListed
     require: length(title) > 0                             rescue reject DraftIncomplete
     require: length(description) > 0                       rescue reject DraftIncomplete
-    require: pricePerNight > 0                             rescue reject DraftIncomplete
+    require: pricePerMinute > 0                            rescue reject DraftIncomplete
     effect:  status  = Listed
     effect:  updated = now
     commit
@@ -99,39 +101,49 @@ actor Calendar(listing: Id) {
     held: [HeldEntry]
   }
 
-  invariant "held is unique by (date, booking) — no duplicate (date, booking) pairs"
+  // No two held entries for the same booking may have overlapping slots.
+  // No two different bookings may hold overlapping slots on this listing.
+  invariant "held entries for different bookings have non-overlapping slots"
 
-  derive heldDates = held.date
+  derive heldSlots = held.slot
 
   accepts Hold(
-    dates:   DateRange,
+    slot:    TimeRange,
     booking: Id,
     key:     Key,
-  ) -> Result<unit, DatesUnavailable> {
+  ) -> Result<unit, SlotUnavailable> {
     intent: """
-      Reserve every date in the range for the given booking. Rejects
-      DatesUnavailable if any date in the range is already held by a
-      different booking. Idempotent on key: replaying with the same key
-      returns ok without re-appending.
+      Reserve the time slot for the given booking. Rejects SlotUnavailable if
+      any existing held entry overlaps the requested slot for a different booking.
+      Overlap means: entry.slot.from < slot.to and entry.slot.to > slot.from.
+      Idempotent on key: replaying with the same key returns ok without
+      re-appending.
     """
     require: not any entry in held
-             where entry.date in dates and entry.booking != booking
-             rescue reject DatesUnavailable
-    effect: held = held + [{ date: d, booking } for d in dates
-                            where not any e in held where e.date == d and e.booking == booking]
+             where entry.slot.from < slot.to
+               and entry.slot.to > slot.from
+               and entry.booking != booking
+             rescue reject SlotUnavailable
+    effect: held = held + [{ slot, booking }]
+                   where not any e in held
+                         where e.slot.from == slot.from
+                           and e.slot.to == slot.to
+                           and e.booking == booking
     commit
   }
 
   accepts Release(
-    dates:   DateRange,
+    slot:    TimeRange,
     booking: Id,
     key:     Key,
   ) -> unit {
     intent: """
-      Remove all (date, booking) entries matching the given booking in the
-      given range. Idempotent — releasing already-released dates is a no-op.
+      Remove all held entries matching the given (slot, booking) pair.
+      Idempotent — releasing an already-released slot is a no-op.
     """
-    effect: held = held where not (held.date in dates and held.booking == booking)
+    effect: held = held where not (held.slot.from == slot.from
+                                   and held.slot.to == slot.to
+                                   and held.booking == booking)
     commit
   }
 }
@@ -153,28 +165,28 @@ policy ListingOwner {
 }
 
 flow CreateListing(
-  host:          Id,
-  title:         string,
-  description:   string,
-  location:      string,
-  pricePerNight: Money,
-  maxGuests:     int,
-  now:           Timestamp,
-  key:           Key,
+  host:           Id,
+  title:          string,
+  description:    string,
+  location:       string,
+  pricePerMinute: Money,
+  maxGuests:      int,
+  now:            Timestamp,
+  key:            Key,
 ) -> Result<{ listing: Id }, InvalidListing> {
   intent: "Create a new Listing in Draft status for the given host."
 
   step listing = ask Listing.create({
-    id:            generate(),
+    id:             generate(),
     host,
     title,
     description,
     location,
-    pricePerNight,
+    pricePerMinute,
     maxGuests,
-    status:        Draft,
-    created:       now,
-    updated:       now,
+    status:         Draft,
+    created:        now,
+    updated:        now,
   })
                  rescue reject InvalidListing
 
@@ -183,19 +195,19 @@ flow CreateListing(
 }
 
 flow UpdateListing(
-  listing:       Id,
-  title:         string?,
-  description:   string?,
-  location:      string?,
-  pricePerNight: Money?,
-  maxGuests:     int?,
-  now:           Timestamp,
-  key:           Key,
+  listing:        Id,
+  title:          string?,
+  description:    string?,
+  location:       string?,
+  pricePerMinute: Money?,
+  maxGuests:      int?,
+  now:            Timestamp,
+  key:            Key,
 ) -> Result<unit, InvalidUpdate | ListingNotFound> {
   intent: "Apply a partial update to an existing listing's metadata."
 
   step l = ask Listing.findBy(id: listing)  rescue reject ListingNotFound
-  step _ = ask Listing(listing).UpdateMeta(title, description, location, pricePerNight, maxGuests, now)
+  step _ = ask Listing(listing).UpdateMeta(title, description, location, pricePerMinute, maxGuests, now)
                rescue reject InvalidUpdate
   commit
 }
@@ -223,13 +235,17 @@ flow HideListing(listing: Id, now: Timestamp, key: Key)
 flow ListListings(
   filter: ListingFilter,
   host:   Id?,
-  dates:  DateRange?,
+  slot:   TimeRange?,
 ) -> [Listing] {
   intent: """
     Query listings by filter. Listed is the default. ByHost returns all
     listings for the given host regardless of status. AvailableInRange
-    returns Listed listings whose Calendar.heldDates do not overlap the
-    input dates — used by the guest search surface.
+    returns Listed listings whose Calendar.heldSlots do not overlap the
+    input slot — used by the guest search surface.
+
+    Overlap test: a held slot h overlaps the query slot s when
+    h.from < s.to and h.to > s.from. Any listing with at least one
+    overlapping held slot is excluded from results.
   """
 
   step results =
@@ -239,37 +255,42 @@ flow ListListings(
     else if filter == AvailableInRange
       then any l in Listing
            where l.status == Listed
-             and not any d in Calendar(l.id).heldDates where d in dates
+             and not any h in Calendar(l.id).heldSlots
+                 where h.from < slot.to and h.to > slot.from
 
   commit results
 }
 
-flow HoldDates(listing: Id, dates: DateRange, booking: Id, key: Key)
-  -> Result<unit, DatesUnavailable | ListingNotFound | ListingNotListed>
+// HoldSlot is the booking saga entry point for calendar reservation.
+// Renamed from HoldDates; operates on a contiguous TimeRange instead of a
+// day-granular DateRange.
+flow HoldSlot(listing: Id, slot: TimeRange, booking: Id, key: Key)
+  -> Result<unit, SlotUnavailable | ListingNotFound | ListingNotListed>
 {
-  intent: "Booking saga entry point. Verify listing exists and is Listed, then hold dates. Idempotent on key."
+  intent: "Verify listing exists and is Listed, then hold the time slot. Idempotent on key."
   step l = ask Listing.findBy(id: listing)   rescue reject ListingNotFound
   step _ = if l.status != Listed             then reject ListingNotListed
-  step _ = ask Calendar(listing).Hold(dates, booking, key)
-               rescue reject DatesUnavailable
+  step _ = ask Calendar(listing).Hold(slot, booking, key)
+               rescue reject SlotUnavailable
   commit
 }
 
-flow ReleaseDates(listing: Id, dates: DateRange, booking: Id, key: Key) -> unit {
-  intent: "Booking saga compensation. Unconditionally releases held entries for (dates, booking). Idempotent."
-  step _ = ask Calendar(listing).Release(dates, booking, key)
+// ReleaseSlot is the booking saga compensation. Renamed from ReleaseDates.
+flow ReleaseSlot(listing: Id, slot: TimeRange, booking: Id, key: Key) -> unit {
+  intent: "Booking saga compensation. Unconditionally releases the held slot for (slot, booking). Idempotent."
+  step _ = ask Calendar(listing).Release(slot, booking, key)
   commit
 }
 
 controller Listings {
-  POST /listings -> CreateListing(self, body.title, body.description, body.location, body.pricePerNight, body.maxGuests, now, idempotency_key) {
+  POST /listings -> CreateListing(self, body.title, body.description, body.location, body.pricePerMinute, body.maxGuests, now, idempotency_key) {
     auth: bearer
     policies: [RoleGated(Host)]
     body: {
       title:           string,
       description:     string,
       location:        string,
-      pricePerNight:   Money,
+      pricePerMinute:  Money,
       maxGuests:       int,
       idempotency_key: Key,
     }
@@ -278,14 +299,14 @@ controller Listings {
       err(InvalidListing reason)    -> 422 { error: "invalid_listing", reason }
   }
 
-  PATCH /listings/:id -> UpdateListing(id, body.title, body.description, body.location, body.pricePerNight, body.maxGuests, now, idempotency_key) {
+  PATCH /listings/:id -> UpdateListing(id, body.title, body.description, body.location, body.pricePerMinute, body.maxGuests, now, idempotency_key) {
     auth: bearer
     policies: [RoleGated(Host), ListingOwner]
     body: {
       title?:          string,
       description?:    string,
       location?:       string,
-      pricePerNight?:  Money,
+      pricePerMinute?: Money,
       maxGuests?:      int,
       idempotency_key: Key,
     }
@@ -316,13 +337,13 @@ controller Listings {
       err(ListingNotFound)          -> 404 { error: "listing_not_found" }
   }
 
-  GET /listings -> ListListings(query.filter, query.host, query.dates) {
+  GET /listings -> ListListings(query.filter, query.host, query.slot) {
     auth: none
     query: {
       filter: ListingFilter = Listed,
       host:   Id?,
-      from:   Date?,
-      to:     Date?,
+      from:   Timestamp?,
+      to:     Timestamp?,
     }
     map:
       ok(list) -> 200 { listings: list }
