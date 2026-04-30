@@ -1,9 +1,18 @@
 // preferences.candy — per-target library and idiom preferences for notifications.
 // AI codegen consumes these as hints, not requirements.
+//
+// Auth layer: SQLite + JWT + Argon2 (matches auth.candy canonical shape).
+// Notification layer: queue + per-provider email/SMS bindings.
+// Postmark is the canonical default email provider; fallback chain is
+// SendGrid → Mailgun → Resend (declared in notifications.candy).
 
 target go {
   when need database  use sqlc
   when need id        use ksuid
+  when need hash      use argon2
+  when need jwt       use golang-jwt
+  when need queue     use asynq
+  when need postmark  use postmark-go
   when need sendgrid  use sendgrid-go
   when need mailgun   use mailgun-go
   when need resend    use resend-go
@@ -14,6 +23,9 @@ target go {
 target rust {
   when need database  use sqlx
   when need id        use uuid-v7
+  when need hash      use argon2
+  when need jwt       use jsonwebtoken
+  when need postmark  use postmark
   when need sendgrid  use sendgrid-rs
   when need mailgun   use mailgun-rs
   when need resend    use resend-rs
@@ -23,9 +35,12 @@ target rust {
 
 target typescript {
   notes: "ESM only; tagged unions over class hierarchies"
-  when need queue     use bullmq
-  when need id        use cuid2
   when need database  use drizzle
+  when need id        use cuid2
+  when need hash      use argon2
+  when need jwt       use jsonwebtoken
+  when need queue     use bullmq
+  when need postmark  use postmark
   when need sendgrid  use sendgrid-node
   when need mailgun   use mailgun-js
   when need resend    use resend-node
@@ -34,9 +49,12 @@ target typescript {
 }
 
 target python {
-  when need queue     use celery
-  when need id        use ulid
   when need database  use sqlalchemy
+  when need id        use ulid
+  when need hash      use argon2-cffi
+  when need jwt       use pyjwt
+  when need queue     use celery
+  when need postmark  use postmarker
   when need sendgrid  use sendgrid-python
   when need mailgun   use mailgun-py
   when need resend    use resend-py

@@ -1,38 +1,44 @@
-# notifications — event-driven fan-out to email and SMS
+# notifications — inlined auth + event-driven fan-out to email and SMS
 
-A NotificationWorker actor subscribes to internal events
-(`UserSignedUp`, `OrderShipped`) and dispatches user-facing
-notifications via external providers. Email goes through one of
-SendGrid, Mailgun, or Resend; SMS goes through Twilio or Vonage.
-Provider selection happens at the call site with `Actor[Tag]`.
-Failures retry with exponential backoff and emit
-`NotificationFailed` if the retry budget is exhausted.
+This example demonstrates the canonical auth pattern (signup, login, logout,
+session lifecycle) inlined into a notifications feature, plus multi-provider
+fan-out delivery to email and SMS channels.
 
-This is the smallest spec that exercises `subscribe`, multi-provider
-external actors, and a fan-out pipeline together. The point is to
-show the asynchronous edge of the system — the side where work is
-*pulled* by subscribers rather than *pushed* by a controller.
+Auth follows the same shape as `examples/auth/auth.candy`: JWT-backed sessions,
+argon2id password hashing, a `Role` enum (`Admin`, `User`) for RBAC. Admin
+users can inspect notification delivery state via the admin routes; User-role
+accounts are notification recipients.
+
+Email is delivered via a four-provider rescue chain: **Postmark → SendGrid →
+Mailgun → Resend**. Postmark is the canonical default. Whether codegen wires
+Postmark through its SDK or via HTTP fetch is a codegen concern, not a spec
+concern — the spec declares only the provider tag. The rescue chain falls
+through to the next provider on any failure and emits `NotificationFailed`
+if all providers are exhausted.
+
+SMS uses **Twilio → Vonage** (unchanged).
 
 ## What this exercises
 
-- **`subscribe` to internal events** — `NotificationWorker`
-  subscribes to `UserSignedUp` and `OrderShipped`, both declared as
-  `uses:` imports in the prose block (GRAMMAR.md "event",
-  "subscribe").
-- **`external actor` with `providers:` for Email and SMS** — two
-  separate external actors, each with its own provider set
-  (GRAMMAR.md "Multiple providers").
-- **`Actor[Tag]` selection in flows** — `Email[SendGrid]`,
-  `SMS[Twilio]`.
-- **Fan-out pattern** — one source event triggers multiple delivery
-  attempts across channels.
-- **Retry-on-failure via re-emit** — a delivery failure emits a
-  delayed retry envelope rather than blocking; subscribers handle
-  retries asynchronously.
-- **Delivery-status events** — `NotificationSent` and
-  `NotificationFailed` for downstream observability.
-- **Idempotency** — every `Send` carries a `key: Key` derived from
-  the source event id, so re-delivery does not duplicate.
+- **Inlined canonical auth with RBAC** — `User` carries a `Role` field
+  (`Admin` | `User`); `Session` carries it too so `AdminGated` can evaluate
+  without a database lookup.
+- **`AdminGated` policy on controller routes** — `GET /admin/notifications/:id`
+  and `GET /admin/notifications` require `role == Admin`.
+- **`external actor` with `providers:` for Email and SMS** — Email lists four
+  providers, Postmark first; SMS lists two.
+- **`Actor[Tag]` selection in flows** — `Email[Postmark]`, `Email[SendGrid]`,
+  `SMS[Twilio]`, etc.
+- **Rescue chains** — Postmark-first four-step email chain; Twilio-first
+  two-step SMS chain.
+- **`subscribe` to internal events** — `NotificationWorker` subscribes to
+  `UserSignedUp`, `OrderShipped`, `BookingConfirmed`, `PasswordReset`.
+- **Fan-out pattern** — one source event triggers multiple delivery attempts
+  across channels.
+- **Idempotency** — every `Send` carries a `key: Key`; replaying with the
+  same key does not duplicate.
+- **DeliveryAtLeastOnce** — every trigger event resolves to either
+  `NotificationSent` or `NotificationFailed`; no silent drops.
 
 ## Domain model
 
@@ -42,171 +48,140 @@ show the asynchronous edge of the system — the side where work is
 type Id           opaque  { max: 64 }
 type Timestamp    instant { tz: utc }
 type Key          opaque  { max: 128 }
-type EmailAddress string  { max: 320, format: rfc5322 }
-type PhoneNumber  string  { max: 20,  format: e164 }
-type MessageId    opaque  { max: 128 }    // provider-side id
+type Email        string  { max: 320, format: rfc5322 }
+type Password     string  { ... }
+type PasswordHash opaque
+type Token        opaque  { max: 256 }
+type Phone        string  { max: 32, format: e164 }
+type MessageId    opaque  { max: 128 }
 
-enum NotificationKind { Welcome, Shipped }
-enum Channel          { EmailChannel, SMSChannel }
-enum AttemptOutcome   { Delivered, TransientFailure, PermanentFailure }
-
-type DeliveryAttempt {
-  attempt:     int
-  channel:     Channel
-  provider:    string         // "sendgrid" | "twilio" | etc.
-  message:     MessageId?
-  outcome:     AttemptOutcome
-  reason:      string?
-  at:          Timestamp
-}
+enum Role               { Admin, User }
+enum Channel            { Email, SMS }
+enum NotificationStatus { Pending, Sent, Failed }
 ```
 
-### Actors
+### Auth actors
 
-**NotificationWorker(id: Id)** — singleton-ish actor (one instance
-per region or shard). Stateful only enough to dedup recently-handled
-event keys and track attempt counts. Subscribes:
+**User(id: Id)** — email, argon2id hash, role (default User), created,
+verified. Invariant: email is unique.
 
-```
-subscribe UserSignedUp -> Send(payload.user, Welcome, EmailChannel, payload.user, now)
-subscribe OrderShipped -> Send(payload.user, Shipped, EmailChannel, payload.order, now)
-subscribe OrderShipped -> Send(payload.user, Shipped, SMSChannel,   payload.order, now)
-```
+**Session(token: Token)** — user id, role, issued, expires (7 days),
+revoked flag. `Validate` checks revocation + expiry and returns `{ user, role }`.
+`Revoke` is idempotent.
 
-The `key` argument to `Send` is derived from the source event id so
-that any re-delivery of the source event collapses to a single
-notification.
+### Notification actors
 
-State:
+**Notification(id: Id)** — one instance per dispatch. Tracks channel,
+recipient, template, status, provider used, message id, attempt count.
+`MarkSent` and `MarkFailed` are the only mutations. Subscribes to
+`Email.Delivered` and `SMS.Delivered` for async webhook reconciliation.
 
-```
-state {
-  recent: [DeliveryAttempt] = []   // bounded ring; drop oldest beyond N
-}
-```
-
-Invariants: `length(recent) <= 1000` (a soft guard — true persistence
-lives in the database; this is a read-through cache for dedup).
+**NotificationWorker(id: Id)** — singleton coordinator. Stateless; all
+persistent tracking lives in individual Notification actors. Subscribes
+to trigger events and fans out.
 
 ### Flows
 
-```
-flow Send(recipient: Id, kind: NotificationKind, channel: Channel,
-          key: Key, now: Timestamp)
-  -> Result<DeliveryAttempt, RecipientUnreachable | NoContactInfo>
+**Auth:** `Signup`, `Login`, `Logout` — canonical shape from auth.candy.
 
-flow Retry(prior: DeliveryAttempt, now: Timestamp, key: Key)
-  -> Result<DeliveryAttempt, RetryBudgetExhausted>
+**Delivery:**
+
+```
+flow SendEmail(to, template, trigger_event, trigger_id, now, key)
+  -> Result<{ notification: Id, provider: string, message: MessageId }, AllProvidersFailed>
+
+flow SendSMS(to, template, trigger_event, trigger_id, now, key)
+  -> Result<{ notification: Id, provider: string, message: MessageId }, AllProvidersFailed>
 ```
 
-- **`Send`** looks up the recipient's contact info, picks a provider
-  via `Actor[Tag]` (default `Email[SendGrid]` or `SMS[Twilio]`),
-  calls `SendEmail` or `SendSMS`, and emits `NotificationSent` on
-  success. Transient failures emit a delayed retry envelope (handled
-  by `Retry` after `30s`, then `2m`, then `10m`).
-- **`Retry`** re-attempts with exponential backoff up to a
-  configurable `MaxAttempts` (default 3). Terminal failure emits
-  `NotificationFailed`.
+`SendEmail` rescue chain: `Email[Postmark]` → `Email[SendGrid]` →
+`Email[Mailgun]` → `Email[Resend]`. Each failed arm calls
+`Notification.MarkFailed` before trying the next provider.
+
+**Fan-out handlers:** `OnUserSignedUp`, `OnOrderShipped`,
+`OnBookingConfirmed`, `OnPasswordReset` — invoked by `NotificationWorker`
+subscribe blocks. All are best-effort: provider exhaustion emits
+`NotificationFailed` but the subscriber pipeline is not blocked.
 
 ### Controllers
 
-| Method | Path                          | Target                                       | Auth   | Statuses                          |
-|--------|-------------------------------|----------------------------------------------|--------|-----------------------------------|
-| POST   | /admin/notifications/test     | Send(recipient, kind, channel, generate(), now) | bearer | 202 / 422                         |
-| POST   | /admin/notifications/replay   | Retry(attempt, now, generate())              | bearer | 202 / 409 RetryBudgetExhausted    |
-| POST   | /webhooks/email               | (dispatch to Email emits)                    | none   | 200 (signature-checked)           |
-| POST   | /webhooks/sms                 | (dispatch to SMS emits)                      | none   | 200 (signature-checked)           |
+| Method | Path                          | Auth   | Policy     | Target                                |
+|--------|-------------------------------|--------|------------|---------------------------------------|
+| POST   | /signup                       | none   |            | Signup(email, password, now, key)     |
+| POST   | /login                        | none   |            | Login(email, password, now)           |
+| POST   | /logout                       | bearer |            | Logout(bearer, now)                   |
+| GET    | /admin/notifications/:id      | bearer | AdminGated | Notification(id)                      |
+| GET    | /admin/notifications          | bearer | AdminGated | Notification.where(status == status)  |
 
-The two webhook routes are the inbound side of the external actors —
-SendGrid/Mailgun/Resend POST delivery-status events; Twilio/Vonage
-POST SMS status. Subscribers (here, `NotificationWorker`) react.
-
-The bulk of the work happens via `subscribe`, not via these routes.
-Controllers exist for admin testing and replay only.
+Admin routes require `role == Admin`. The `BearerAuth` check runs first
+(from the prose-level `policies:` list); `AdminGated` runs after.
 
 ### Events
 
-Internal events imported via `uses:` (declared in the features that
-emit them, not here):
+Auth events:
 
 ```
-event UserSignedUp { payload: { user: Id, email: EmailAddress, at: Timestamp }, delivery: eager }
-event OrderShipped { payload: { user: Id, order: Id, at: Timestamp },           delivery: eager }
+event UserSignedUp   { payload: { user: Id, email: Email, at: Timestamp }, delivery: eager }
+event UserLoggedIn   { payload: { user: Id, at: Timestamp },               delivery: eager }
+event UserVerified   { payload: { user: Id, at: Timestamp },               delivery: eager }
+event SessionRevoked { payload: { token: Token, user: Id, at: Timestamp }, delivery: eager }
 ```
 
-Events emitted by this feature:
+Notification events:
 
 ```
-event NotificationSent   { payload: { recipient: Id, kind: NotificationKind, channel: Channel, provider: string, message: MessageId, at: Timestamp }, delivery: eager }
-event NotificationFailed { payload: { recipient: Id, kind: NotificationKind, channel: Channel, attempts: int, reason: string, at: Timestamp }, delivery: strict }
+event NotificationSent   { payload: { notification: Id, channel: Channel, provider: string, at: Timestamp }, delivery: eager }
+event NotificationFailed { payload: { notification: Id, channel: Channel, attempts: int, at: Timestamp },    delivery: strict }
 ```
 
-`NotificationFailed` is `strict` (exactly-once) because it likely
-triggers an alert or compensation upstream.
+`NotificationFailed` is `strict` because it may trigger alerts or
+compensating actions upstream.
 
 ### Policies
 
-- **DeliveryAtLeastOnce** — feature-scope. Asserts that every source
-  event handled by `NotificationWorker` results in either a
-  `NotificationSent` or a `NotificationFailed`. No silent drops.
+- **PasswordStrength** — argon2id hashing; blocklist check; length + complexity rules.
+- **BearerAuth** — feature-scoped; all authenticated routes go through this.
+- **AdminGated** — controller-scoped on the Notifications controller.
+- **DeliveryAtLeastOnce** — feature-scoped; asserts no silent drops.
 
 ### External dependencies
 
-**`external actor Email` with `providers: [SendGrid, Mailgun, Resend]`.**
+**`external actor Email` with `providers: [Postmark, SendGrid, Mailgun, Resend]`.**
+
+Postmark is first in the list and first in the rescue chain. The spec does not
+prescribe SDK vs HTTP-API — that is a codegen concern. Each provider has a
+separate `config` block with its own secrets.
 
 ```
-accepts SendEmail(to: EmailAddress, subject: string, body: string, key: Key)
-  -> Result<MessageId, EmailRejected | NetworkError | RateLimited>
+accepts Send(to: Email, subject: string, body: string, key: Key)
+  -> Result<MessageId, EmailDeclined | NetworkError | RateLimited>
 
-emits EmailDelivered { message: MessageId, at: Timestamp }
-emits EmailBounced   { message: MessageId, reason: string, at: Timestamp }
+emits Delivered { message: MessageId, at: Timestamp }
+emits Bounced   { message: MessageId, reason: string, at: Timestamp }
 ```
 
 **`external actor SMS` with `providers: [Twilio, Vonage]`.**
 
 ```
-accepts SendSMS(to: PhoneNumber, body: string, key: Key)
-  -> Result<MessageId, SMSRejected | NetworkError | RateLimited>
+accepts Send(to: Phone, body: string, key: Key)
+  -> Result<MessageId, SMSDeclined | NetworkError | RateLimited>
 
-emits SMSDelivered { message: MessageId, at: Timestamp }
-emits SMSFailed    { message: MessageId, reason: string, at: Timestamp }
+emits Delivered { message: MessageId, at: Timestamp }
+emits Failed    { message: MessageId, reason: string, at: Timestamp }
 ```
-
-Per-provider `config:` blocks declare API keys and webhook secrets.
 
 ## Codegen targets
 
 All four targets supported. Per-target idioms:
 
-- **Go (chi)** — providers via their official Go SDKs; channels +
-  goroutines for the retry pipeline. Webhook routes per provider.
-- **Rust (axum)** — provider clients behind a trait; tokio tasks for
-  the retry pipeline.
-- **TypeScript (hono)** — BullMQ for the retry queue; per-provider
-  Node SDKs.
-- **Python (fastapi)** — Celery for the retry queue; per-provider
-  Python SDKs.
-
-## Conformance
-
-Eval lives at `evals/notifications/notifications.hurl` (tracked by
-#28). Cover:
-
-- Happy path: `UserSignedUp` → `NotificationSent` (email).
-- Fan-out: `OrderShipped` → both an email and an SMS notification.
-- Retry: simulated transient `NetworkError` retries up to budget,
-  succeeds on attempt 2, emits `NotificationSent`.
-- Permanent failure: `EmailRejected` exhausts retry budget, emits
-  `NotificationFailed`.
-- Idempotency: re-delivering the same source event with the same
-  derived key does not duplicate the notification.
-- Webhook integration: a provider POSTs `EmailDelivered` →
-  `NotificationWorker` reconciles attempt state.
-
-## Issue tracking
-
-- Implementation: #27
-- Eval: #28 (scaffold)
+- **Go (chi)** — `postmark-go` for Postmark; official Go SDKs for other
+  providers; `asynq` for background dispatch; `golang-jwt` + `argon2` for auth.
+- **Rust (axum)** — `postmark` crate; provider clients behind a trait;
+  `jsonwebtoken` + `argon2` for auth; tokio tasks for fan-out.
+- **TypeScript (hono)** — `postmark` npm package; BullMQ for the dispatch
+  queue; `jsonwebtoken` + `argon2` for auth; ESM only.
+- **Python (fastapi)** — `postmarker`; Celery for the dispatch queue;
+  `pyjwt` + `argon2-cffi` for auth.
 
 ## Status
 
