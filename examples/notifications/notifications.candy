@@ -1,33 +1,52 @@
-// notifications.candy — event-driven fan-out to email and SMS providers.
+// notifications.candy — inlined auth + event-driven fan-out to email and SMS providers.
 //
+// Auth follows the canonical shape from examples/auth/auth.candy.
 // A NotificationWorker actor subscribes to trigger events and dispatches
 // user-facing notifications via external email and SMS providers.
-// Email goes through SendGrid → Mailgun → Resend (rescue chain).
+// Email goes through Postmark → SendGrid → Mailgun → Resend (rescue chain).
 // SMS goes through Twilio → Vonage (rescue chain).
 // Every dispatch creates a Notification actor that tracks delivery status.
+//
+// Admin routes (GET /admin/notifications/:id, GET /admin/notifications) are
+// gated behind AdminGated — callers must be authenticated with role Admin.
 
 prose {
   intent: """
-    Fan-out delivery of internal events to user-facing channels.
+    Account auth (signup, login, logout) plus fan-out delivery of internal
+    events to user-facing channels.
+
     A NotificationWorker subscribes to UserSignedUp, OrderShipped,
     BookingConfirmed, and PasswordReset, then dispatches to Email and/or
     SMS providers. Each dispatch is a Notification actor that tracks its
     own status and idempotency key.
 
-    The hero patterns here are: (a) two multi-provider external actors with
-    Actor[Tag] call-site selection, (b) rescue chains across all providers
-    inside SendEmail and SendSMS, and (c) actor-level subscribe blocks for
-    fan-out.
+    Auth issues bearer tokens (JWT-shaped) on successful login. Role-based
+    access: Admin users can inspect notification state via the admin routes;
+    User-role accounts are the recipients of notifications.
+
+    The hero patterns here are: (a) inlined canonical auth with RBAC,
+    (b) two multi-provider external actors with Actor[Tag] call-site
+    selection, (c) rescue chains across all providers inside SendEmail and
+    SendSMS, and (d) actor-level subscribe blocks for fan-out.
+
+    Postmark is the canonical default email provider. Whether codegen wires
+    it via the Postmark SDK or via HTTP fetch is a codegen concern — the spec
+    declares only the provider tag. Fallback order: Postmark → SendGrid →
+    Mailgun → Resend.
 
     DeliveryAtLeastOnce ensures every trigger event resolves to either a
     NotificationSent or a NotificationFailed — no silent drops.
   """
 
   exports:
+    actor User, Session
     actor NotificationWorker
     actor Notification
+    flow  Signup, Login, Logout
     flow  SendEmail, SendSMS
     flow  OnUserSignedUp, OnOrderShipped, OnBookingConfirmed, OnPasswordReset
+    type  Email, Password, Token
+    event UserSignedUp, UserLoggedIn, SessionRevoked
     event NotificationSent, NotificationFailed
 
   // In a multi-feature project, trigger events come from other features:
@@ -40,34 +59,214 @@ prose {
     external Email for Send
     external SMS   for Send
 
-  policies: [DeliveryAtLeastOnce]
+  policies: [BearerAuth, DeliveryAtLeastOnce]
 }
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type Id        opaque  { max: 64 }
-type Timestamp instant { tz: utc }
-type Key       opaque  { max: 128 }
-type Email     string  { max: 320, format: rfc5322 }
-type Phone     string  { max: 32, format: e164 }
-type MessageId opaque  { max: 128 }
+type Id           opaque  { max: 64 }
+type Timestamp    instant { tz: utc }
+type Key          opaque  { max: 128 }
+type Email        string  { max: 320, format: rfc5322 }
+type Password     string  { intent: "plaintext at rest is forbidden — only hashed forms persist" }
+type PasswordHash opaque
+type Token        opaque  { max: 256 }
+type Phone        string  { max: 32, format: e164 }
+type MessageId    opaque  { max: 128 }
 
+enum Role               { Admin, User }
 enum Channel            { Email, SMS }
 enum NotificationStatus { Pending, Sent, Failed }
 
 // ---------------------------------------------------------------------------
-// Trigger events — declared locally for standalone use
-//
-// In a multi-feature project these would be imported via uses: above.
+// Auth: actors
 // ---------------------------------------------------------------------------
 
-// Email-only: a welcome email on sign-up.
-event UserSignedUp {
-  payload:  { user: Id, email: Email, at: Timestamp }
-  delivery: eager
+actor User(id: Id) {
+  state {
+    email:    Email
+    hash:     PasswordHash
+    role:     Role = User
+    created:  Timestamp
+    verified: bool = false
+  }
+
+  invariant "email is unique across all User instances"
+
+  accepts Verify() -> Result<unit, AlreadyVerified> {
+    intent: "Mark the user's email as verified."
+    require: verified == false  rescue reject AlreadyVerified
+    effect: verified = true
+    emit UserVerified { user: self.id, at: now }
+    commit
+  }
 }
+
+actor Session(token: Token) {
+  state {
+    user:    Id
+    role:    Role
+    issued:  Timestamp
+    expires: Timestamp
+    revoked: bool = false
+  }
+
+  invariant "expires > issued"
+
+  accepts Validate(now: Timestamp) -> Result<{ user: Id, role: Role }, SessionInvalid> {
+    intent: "Return the user id and role if the session is live, else reject."
+    require: revoked == false  rescue reject SessionInvalid
+    require: now < expires     rescue reject SessionInvalid
+    commit { user, role }
+  }
+
+  accepts Revoke() -> unit {
+    intent: "Mark the session as revoked. Idempotent — re-revoking is a no-op."
+    effect: revoked = true
+    emit SessionRevoked { token: self.token, user, at: now }
+    commit
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auth: policies
+// ---------------------------------------------------------------------------
+
+policy PasswordStrength {
+  intent: """
+    A password is acceptable when:
+      - length >= 12
+      - contains at least one letter and one digit
+      - is not in the common-password blocklist
+
+    Hashing uses argon2id with parameters from deployment secrets.
+    Plaintext passwords never persist; only PasswordHash is stored.
+  """
+  examples:
+    - given: "correct horse battery staple 9"
+      then:  ok
+    - given: "short1"
+      then:  err(TooShort)
+    - given: "alllowercase"
+      then:  err(MissingDigit)
+    - given: "password123"
+      then:  err(InBlocklist)
+}
+
+// ---------------------------------------------------------------------------
+// Auth: flows
+// ---------------------------------------------------------------------------
+
+flow Signup(email: Email, password: Password, now: Timestamp, key: Key)
+  -> Result<{ user: Id, token: Token }, WeakPassword | EmailTaken>
+{
+  intent: """
+    Create a new user, hash the password, and issue an initial session.
+    Idempotent on key — replaying with the same key returns the same user
+    and a fresh session. New accounts are assigned role User by default.
+  """
+
+  step strength = PasswordStrength(password)
+                  rescue reject WeakPassword(reason)
+
+  step taken    = if any user in User where user.email == email
+                  then reject EmailTaken
+
+  step user     = ask User.create({
+                    id:      generate(),
+                    email,
+                    hash:    hash(password),
+                    role:    User,
+                    created: now,
+                  })
+
+  step session  = ask Session.create({
+                    token:   generate(),
+                    user:    user.id,
+                    role:    user.role,
+                    issued:  now,
+                    expires: now after 7d,
+                  })
+
+  emit UserSignedUp { user: user.id, email, at: now }
+  commit { user: user.id, token: session.token }
+}
+
+flow Login(email: Email, password: Password, now: Timestamp)
+  -> Result<{ user: Id, token: Token }, InvalidCredentials>
+{
+  intent: """
+    Authenticate by email and password. On success, issue a new session.
+    Errors are opaque — never reveal which of email or password was wrong.
+  """
+
+  step user    = ask User.findBy(email)  rescue reject InvalidCredentials
+  step ok      = if not verify(password, user.hash) then reject InvalidCredentials
+  step session = ask Session.create({
+                   token:   generate(),
+                   user:    user.id,
+                   role:    user.role,
+                   issued:  now,
+                   expires: now after 7d,
+                 })
+
+  emit UserLoggedIn { user: user.id, at: now }
+  commit { user: user.id, token: session.token }
+}
+
+flow Logout(token: Token, now: Timestamp) -> unit {
+  intent: "Revoke the session associated with the given bearer token."
+  step _ = ask Session(token).Revoke()
+  commit
+}
+
+// ---------------------------------------------------------------------------
+// Auth: events
+// ---------------------------------------------------------------------------
+
+event UserSignedUp   { payload: { user: Id, email: Email, at: Timestamp }, delivery: eager }
+event UserLoggedIn   { payload: { user: Id, at: Timestamp },               delivery: eager, order: by user }
+event UserVerified   { payload: { user: Id, at: Timestamp },               delivery: eager }
+event SessionRevoked { payload: { token: Token, user: Id, at: Timestamp }, delivery: eager }
+
+// ---------------------------------------------------------------------------
+// Auth: controller
+// ---------------------------------------------------------------------------
+
+controller Auth {
+  POST /signup -> Signup(email, password, now, idempotency_key) {
+    auth: none
+    body: { email: Email, password: Password, idempotency_key: Key }
+    map:
+      ok(result)               -> 201 { user_id: result.user, token: result.token }
+      err(WeakPassword reason) -> 422 { error: "weak_password", reason }
+      err(EmailTaken)          -> 409 { error: "email_taken" }
+  }
+
+  POST /login -> Login(email, password, now) {
+    auth: none
+    body: { email: Email, password: Password }
+    map:
+      ok(result)              -> 200 { user_id: result.user, token: result.token }
+      err(InvalidCredentials) -> 401 { error: "invalid_credentials" }
+  }
+
+  POST /logout -> Logout(bearer, now) {
+    auth: bearer
+    map:
+      ok(_) -> 204
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Trigger events — declared locally for standalone use
+//
+// UserSignedUp is already declared above in the auth events block; the
+// notifications worker subscribes to it from there. The remaining events
+// would, in a multi-feature project, be imported via uses: above.
+// ---------------------------------------------------------------------------
 
 // Email + SMS: shipping notification with optional phone for SMS.
 event OrderShipped {
@@ -93,17 +292,18 @@ event PasswordReset {
 // ---------------------------------------------------------------------------
 
 external actor Email {
-  intent: "Transactional email delivery via SendGrid, Mailgun, or Resend."
+  intent: "Transactional email delivery. Postmark is the canonical default; falls back to SendGrid, Mailgun, Resend."
 
-  providers: [SendGrid, Mailgun, Resend]
+  providers: [Postmark, SendGrid, Mailgun, Resend]
 
-  config SendGrid: api_key:        secret "SENDGRID_KEY"
-                   webhook_secret: secret "SENDGRID_WEBHOOK_SECRET"
-  config Mailgun:  api_key:        secret "MAILGUN_KEY"
-                   domain:         secret "MAILGUN_DOMAIN"
-                   webhook_secret: secret "MAILGUN_WEBHOOK_SECRET"
-  config Resend:   api_key:        secret "RESEND_KEY"
-                   webhook_secret: secret "RESEND_WEBHOOK_SECRET"
+  config Postmark:  api_key:        secret "POSTMARK_KEY"
+                    webhook_secret: secret "POSTMARK_WEBHOOK_SECRET"
+  config SendGrid:  api_key:        secret "SENDGRID_KEY"
+                    webhook_secret: secret "SENDGRID_WEBHOOK_SECRET"
+  config Mailgun:   api_key:        secret "MAILGUN_KEY"
+                    domain:         secret "MAILGUN_DOMAIN"
+                    webhook_secret: secret "MAILGUN_WEBHOOK_SECRET"
+  config Resend:    api_key:        secret "RESEND_KEY"
 
   accepts Send(to: Email, subject: string, body: string, key: Key)
     -> Result<MessageId, EmailDeclined | NetworkError | RateLimited>
@@ -231,7 +431,7 @@ policy DeliveryAtLeastOnce {
     the SendEmail / SendSMS flows before the outer flow commits.
   """
   examples:
-    - given: UserSignedUp dispatched, SendGrid accepts
+    - given: UserSignedUp dispatched, Postmark accepts
       then:  ok(NotificationSent emitted)
 
     - given: UserSignedUp dispatched, all email providers reject
@@ -269,10 +469,10 @@ event NotificationFailed {
 // ---------------------------------------------------------------------------
 // Flows: SendEmail
 //
-// Creates a Notification actor then attempts SendGrid → Mailgun → Resend in
-// a rescue chain. Each failed arm records the attempt on the actor before
-// falling through to the next provider. On exhaustion rejects AllProvidersFailed
-// and emits NotificationFailed.
+// Creates a Notification actor then attempts Postmark → SendGrid → Mailgun →
+// Resend in a rescue chain. Each failed arm records the attempt on the actor
+// before falling through to the next provider. On exhaustion rejects
+// AllProvidersFailed and emits NotificationFailed.
 // ---------------------------------------------------------------------------
 
 flow SendEmail(
@@ -285,9 +485,13 @@ flow SendEmail(
 ) -> Result<{ notification: Id, provider: string, message: MessageId }, AllProvidersFailed>
 {
   intent: """
-    Send a templated email. Tries SendGrid first; falls back to Mailgun, then
-    Resend. Records every per-provider attempt on the Notification actor for
-    observability. On exhaustion emits NotificationFailed and rejects.
+    Send a templated email. Tries Postmark first (canonical default); falls
+    back to SendGrid, then Mailgun, then Resend. Records every per-provider
+    attempt on the Notification actor for observability. On exhaustion emits
+    NotificationFailed and rejects.
+
+    Whether codegen wires Postmark via its SDK or via HTTP fetch is a codegen
+    concern — the spec declares only the provider tag.
   """
 
   step notification_id = generate()
@@ -311,15 +515,17 @@ flow SendEmail(
   step subject = renderSubject(template, trigger_id)
   step body    = renderBody(template, trigger_id)
 
-  // Rescue chain across all three email providers.
-  // Each rescue arm records the failure before trying the next provider.
+  // Rescue chain across all four email providers. Postmark is the canonical
+  // default. Each rescue arm records the failure before trying the next provider.
   step send_result =
-    ask Email[SendGrid].Send(to, subject, body, key)
+    ask Email[Postmark].Send(to, subject, body, key)
+      rescue ask Notification(notification_id).MarkFailed("Postmark failed", now);
+             ask Email[SendGrid].Send(to, subject, body, key)
       rescue ask Notification(notification_id).MarkFailed("SendGrid failed", now);
              ask Email[Mailgun].Send(to, subject, body, key)
       rescue ask Notification(notification_id).MarkFailed("Mailgun failed", now);
              ask Email[Resend].Send(to, subject, body, key)
-      rescue ask Notification(notification_id).MarkFailed("Resend failed; all providers exhausted", now);
+      rescue ask Notification(notification_id).MarkFailed("all providers exhausted", now);
              emit NotificationFailed { notification: notification_id, channel: Email, attempts: notification.attempts + 1, at: now };
              reject AllProvidersFailed
 
@@ -448,6 +654,8 @@ flow OnPasswordReset(user: Id, email: Email, token: string, at: Timestamp) -> un
 //
 // Notifications are primarily event-driven. These two admin routes support
 // ops inspection of delivery state — no trigger, no replay, read-only.
+// AdminGated requires role Admin; BearerAuth (from prose policies) handles
+// the token check first.
 // ---------------------------------------------------------------------------
 
 controller Notifications {

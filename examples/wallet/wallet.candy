@@ -1,63 +1,72 @@
-// wallet.candy — money primitives, idempotency, and conservation invariants.
+// wallet.candy — admin-funded wallets, peer-to-peer transfers, scheduled transfers.
 //
-// Per-user wallets with topup, withdraw, and peer-to-peer transfer.
-// Money is integer minor units in USD; floats are forbidden. Every state
-// change appends a journal entry; balance is derived from the journal so
-// the two can never disagree. Replays are idempotent on key.
+// Auth is inlined (User + Session + Signup/Login/Logout + JWT) following the
+// multi-feature standalone-project model. Money is integer minor units in USD;
+// floats are forbidden. Every state change appends a JournalEntry; balance is
+// derived from the journal. Every replayable flow accepts an idempotency key.
 
 prose {
   intent: """
-    A per-user wallet supporting topup, withdraw, and peer-to-peer transfer.
-    Money is integer minor units in USD — no floats, no rounding surprises.
-    Every state change appends a JournalEntry to an append-only list; the
-    wallet balance is derived from the sum of deltas so there is only ever
-    one source of truth. Every flow accepts an idempotency key, and every
-    Credit/Debit message on the actor replays safely: the same key returns
-    the prior entry without re-applying the effect.
+    A per-user wallet with role-separated funding and inlined authentication.
+    Only an Admin may call FundWallet — users cannot top up their own wallet and
+    cannot deduct from anyone else's. A User may withdraw from their own wallet
+    and transfer to any other user peer-to-peer. Any authenticated user may
+    schedule a future transfer; a recurring schedule fires every minute and
+    executes transfers whose fire_at has passed.
 
-    Transfer is a two-leg saga: debit the source, then credit the
-    destination. If the credit fails for any reason, the source debit is
-    compensated by a reversing credit so both wallets return to their
-    pre-transfer balance. TransferAtomicity captures the two-legs-or-zero
-    property in prose and examples.
+    Auth is inlined here (User + Session + Signup/Login/Logout) matching the
+    multi-feature standalone-project model. Codegen targets JWT-signed sessions
+    with argon2id password hashing and SQLite for dev; see preferences.candy.
 
-    This example is intentionally substrate-only — no external payment
-    SDKs, no schedules. The pedagogical point is that non-trivial financial
-    logic does not require an external SDK.
+    The journal-as-source-of-truth pattern is preserved from the base wallet spec:
+    balance is derived from sum(journal.delta) and is never stored separately.
+    AdminFund is a distinct accept on Wallet (rather than a bare Credit with kind Fund)
+    so that the admin path is structurally unambiguous in the journal and cannot be
+    called via the generic Credit path.
+
+    ScheduledTransferActor is a separate actor (not embedded in Wallet state) so the
+    schedule predicate can query across all pending schedules regardless of source
+    wallet, and so a scheduled transfer can be cancelled or inspected without touching
+    either wallet.
   """
 
   exports:
-    actor Wallet
-    flow  Topup, Withdraw, Transfer
-    type  Money, Key
-    event WalletTopped, WalletWithdrawn, WalletTransferred
+    actor  User, Session, Wallet
+    flow   Signup, Login, Logout,
+           FundWallet, Withdraw, Transfer,
+           ScheduleTransfer, CancelScheduledTransfer, ExecuteScheduledTransfer,
+           GetBalance, GetJournal
+    event  UserSignedUp, UserLoggedIn, SessionRevoked,
+           WalletFunded, WalletDebited, TransferExecuted,
+           ScheduledTransferQueued, ScheduledTransferExecuted, ScheduledTransferCancelled
 
-  policies: [TransferAtomicity]
+  policies: [BearerAuth]
 }
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+// --- Types ------------------------------------------------------------------
 
-type Id        opaque  { max: 64 }
-type Timestamp instant { tz: utc }
-type Key       opaque  { max: 128 }
+type Id           opaque  { max: 64 }
+type Timestamp    instant { tz: utc }
+type Email        string  { max: 320, format: rfc5322 }
+type Password     string  { intent: "plaintext at rest is forbidden — only hashed forms persist" }
+type PasswordHash opaque
+type Token        opaque  { max: 256 }
+type Key          opaque  { max: 128 }
 
-// Money is integer minor units (cents). Arithmetic is exact; no rounding
-// occurs at the type level because round: nearest applies only when the
-// codegen must bridge a fractional input (e.g. a REST body float). In
-// practice, callers always supply whole cent values.
+// Money is integer minor units (cents). Arithmetic is exact.
 type Money int { unit: minor, currency: USD, round: nearest }
 
+enum Role { Admin, User }
+
 // EntryKind tags each journal entry with the originating operation.
-// TransferIn and TransferOut are kept distinct so per-kind reporting
-// (e.g. net transfer volume) requires no secondary field.
-enum EntryKind { Topup, Withdrawal, TransferOut, TransferIn }
+// Fund is the admin-only credit path. Compensation is the reversal entry
+// appended when a transfer's credit leg fails — kind is distinct from
+// TransferIn so the debit + its reversal are both visible in the journal.
+enum EntryKind { Fund, Withdrawal, TransferOut, TransferIn, Compensation }
 
 // JournalEntry is the immutable record appended on every balance change.
-// delta is signed: positive for credits (Topup, TransferIn), negative
-// for debits (Withdrawal, TransferOut). counterpart carries the peer
-// wallet id for transfers and is absent for topup/withdrawal.
+// delta is signed: positive for credits (Fund, TransferIn, Compensation on source),
+// negative for debits (Withdrawal, TransferOut).
 type JournalEntry {
   id:          Id
   kind:        EntryKind
@@ -67,9 +76,52 @@ type JournalEntry {
   at:          Timestamp
 }
 
-// ---------------------------------------------------------------------------
-// Actor
-// ---------------------------------------------------------------------------
+enum ScheduleStatus { Pending, Executed, Cancelled }
+
+// --- Actors -----------------------------------------------------------------
+
+actor User(id: Id) {
+  state {
+    email:   Email
+    hash:    PasswordHash
+    role:    Role      = User
+    created: Timestamp
+  }
+
+  invariant "email is unique across all User instances"
+
+  accepts Promote(to: Role) -> unit {
+    intent: "Admin-driven role change. Guarded at the controller route by AdminGated."
+    effect: role = to
+    commit
+  }
+}
+
+actor Session(token: Token) {
+  state {
+    user:    Id
+    role:    Role
+    issued:  Timestamp
+    expires: Timestamp
+    revoked: bool = false
+  }
+
+  invariant "expires > issued"
+
+  accepts Validate(now: Timestamp) -> Result<{ user: Id, role: Role }, SessionInvalid> {
+    intent: "Return user id and role if the session is live; reject otherwise."
+    require: revoked == false  rescue reject SessionInvalid
+    require: now < expires     rescue reject SessionInvalid
+    commit { user: self.user, role: self.role }
+  }
+
+  accepts Revoke() -> unit {
+    intent: "Mark the session as revoked. Idempotent — re-revoking is a no-op."
+    effect: revoked = true
+    emit SessionRevoked { token: self.token, user: self.user, at: now }
+    commit
+  }
+}
 
 actor Wallet(owner: Id) {
   state {
@@ -77,23 +129,35 @@ actor Wallet(owner: Id) {
     created: Timestamp
   }
 
-  // Balance is the authoritative sum of all signed deltas. It is never
-  // stored separately; codegen materialises it as a computed column or a
-  // live aggregation depending on the target.
   derive balance = sum(journal.delta)
 
-  // Conservation invariants. The first is a safety property: no wallet
-  // may go negative. The second is tautological by construction but
-  // declares the derivation contract explicitly so codegen can emit a
-  // self-check assertion in debug builds.
   invariant balance >= 0
   invariant balance == sum(journal.delta)
-
-  // Idempotency invariant: no two entries in the journal share the same
-  // (key, kind) pair. Credit and Debit enforce this at write time; this
-  // invariant is the spec-level declaration that makes the property
-  // grep-able and testable.
   invariant "all (key, kind) pairs in journal are distinct"
+
+  accepts AdminFund(
+    amount: Money,
+    by:     Id,
+    key:    Key,
+    now:    Timestamp,
+  ) -> Result<JournalEntry, ReplayMismatch> {
+    intent: "Append a positive Fund entry. Idempotent on (key, Fund). ReplayMismatch on amount mismatch."
+    step prior = journal where e.key == key and e.kind == Fund
+    step _ = if length(prior) > 0 then
+               if last(prior).delta != amount
+               then reject ReplayMismatch
+               else commit last(prior)
+    step entry = {
+      id:          generate(),
+      kind:        Fund,
+      delta:       amount,
+      counterpart: by,
+      key,
+      at:          now,
+    }
+    effect: journal = journal + [entry]
+    commit entry
+  }
 
   accepts Credit(
     amount:      Money,
@@ -102,12 +166,7 @@ actor Wallet(owner: Id) {
     key:         Key,
     now:         Timestamp,
   ) -> Result<JournalEntry, ReplayMismatch> {
-    intent: """
-      Append a positive journal entry. Idempotent on (key, kind): if an
-      entry with the same key and kind already exists, return it without
-      re-appending. ReplayMismatch fires if the key exists but the amount
-      or counterpart differs — that is a caller bug, not a replay.
-    """
+    intent: "Append a positive journal entry (TransferIn or Compensation). Idempotent on (key, kind)."
     step prior = journal where e.key == key and e.kind == kind
     step _ = if length(prior) > 0 then
                if last(prior).delta != amount or last(prior).counterpart != counterpart
@@ -132,12 +191,7 @@ actor Wallet(owner: Id) {
     key:         Key,
     now:         Timestamp,
   ) -> Result<JournalEntry, InsufficientFunds | ReplayMismatch> {
-    intent: """
-      Append a negative journal entry. Idempotent on (key, kind): same
-      semantics as Credit. Rejects InsufficientFunds if balance < amount
-      and no prior matching entry exists (i.e. this is a fresh attempt,
-      not a replay).
-    """
+    intent: "Append a negative journal entry (Withdrawal or TransferOut). Idempotent on (key, kind)."
     step prior = journal where e.key == key and e.kind == kind
     step _ = if length(prior) > 0 then
                if last(prior).delta != (0 - amount) or last(prior).counterpart != counterpart
@@ -157,9 +211,112 @@ actor Wallet(owner: Id) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Policy
-// ---------------------------------------------------------------------------
+actor ScheduledTransferActor(id: Id) {
+  intent: "Tracks a single scheduled peer-to-peer transfer. Separate from Wallet so the schedule can query across all sources."
+
+  state {
+    source:  Id
+    dest:    Id
+    amount:  Money
+    fire_at: Timestamp
+    key:     Key
+    status:  ScheduleStatus = Pending
+    created: Timestamp
+  }
+
+  invariant amount > 0
+
+  accepts MarkExecuted() -> Result<unit, AlreadyExecuted | AlreadyCancelled> {
+    require: status == Pending  rescue
+      if status == Executed  then reject AlreadyExecuted
+      else reject AlreadyCancelled
+    effect: status = Executed
+    commit
+  }
+
+  accepts MarkCancelled() -> Result<unit, AlreadyExecuted | AlreadyCancelled> {
+    require: status == Pending  rescue
+      if status == Executed  then reject AlreadyExecuted
+      else reject AlreadyCancelled
+    effect: status = Cancelled
+    commit
+  }
+}
+
+// --- Policies ---------------------------------------------------------------
+
+policy PasswordStrength {
+  intent: """
+    A password is acceptable when:
+      - length >= 12
+      - contains at least one letter and one digit
+      - is not in the common-password blocklist
+
+    Hashing uses argon2id with parameters from deployment secrets.
+    Plaintext passwords never persist; only PasswordHash is stored.
+  """
+  examples:
+    - given: "correct horse battery staple 9"
+      then:  ok
+    - given: "short1"
+      then:  err(TooShort)
+    - given: "alllowercase"
+      then:  err(MissingDigit)
+    - given: "password123"
+      then:  err(InBlocklist)
+}
+
+policy BearerAuth {
+  intent: """
+    Validates the Authorization: Bearer <token> header on every request.
+    Calls Session(token).Validate(now) and binds the returned user id and
+    role for downstream policy checks. Signup and Login override this at
+    route scope with auth: none.
+
+    On missing or invalid token the request is rejected with 401.
+    On expired or revoked session the request is rejected with 401.
+  """
+  examples:
+    - given: "valid unexpired token for user with role Admin"
+      then:  ok({ user: <id>, role: Admin })
+    - given: "expired token"
+      then:  err(SessionInvalid)
+    - given: "missing Authorization header"
+      then:  err(Unauthenticated)
+}
+
+policy AdminGated {
+  intent: """
+    The caller must carry the Admin role. Any authenticated non-admin is
+    rejected NotAuthorized. Attached at controller route scope on the
+    FundWallet and Promote endpoints.
+
+    Admins cannot withdraw or transfer — the wallet-owner restriction on
+    those flows applies uniformly and Admin is not an owner of anyone's wallet.
+  """
+  examples:
+    - given: "caller has role Admin"
+      then:  ok
+    - given: "caller has role User"
+      then:  err(NotAuthorized)
+}
+
+policy WalletOwner {
+  intent: """
+    The caller must be the owner of the source wallet. Attached at flow scope
+    on Withdraw and Transfer (source leg) and ScheduleTransfer (source leg).
+
+    Admin role does not bypass this — admins can fund wallets but cannot
+    drain them, not even their own other-user wallets.
+  """
+  examples:
+    - given: "caller id == wallet.owner for Withdraw"
+      then:  ok
+    - given: "caller id != wallet.owner for Withdraw"
+      then:  err(NotAuthorized)
+    - given: "caller has role Admin, caller id != wallet.owner for Withdraw"
+      then:  err(NotAuthorized)
+}
 
 policy TransferAtomicity {
   intent: """
@@ -167,19 +324,17 @@ policy TransferAtomicity {
     succeed together or compensate together. There is no in-between state
     where one wallet has been debited but the other not yet credited.
 
-    Concretely: the Transfer flow first debits the source wallet (step
-    'out'). If that succeeds, it credits the destination wallet (step
-    'in'). If the credit fails for any reason — network fault, destination
-    wallet not found, or any other error — the flow issues a compensating
-    Credit to the source wallet using a deterministic derived key
-    (key+"#compensate"). The compensating Credit uses kind TransferIn so
-    the debit and its reversal are distinguishable in the journal and
-    sum to zero net effect on the source balance.
+    Concretely: Transfer first debits the source wallet (step 'out'). If that
+    succeeds, it credits the destination wallet (step 'in'). If the credit
+    fails for any reason — network fault, destination wallet not found, or any
+    other error — the flow issues a compensating Credit to the source using a
+    deterministic derived key (key+"#compensate") with kind Compensation. The
+    Compensation kind keeps the reversal distinguishable from a normal TransferIn
+    and does not violate the (key, kind) idempotency invariant.
 
-    A replay of the original key after a successful transfer returns the
-    prior pair of entries without re-applying any effects. A replay after
-    a compensated transfer returns the same compensation result without
-    re-debiting.
+    A replay of the original key after a successful transfer returns the prior
+    pair without re-applying any effects. A replay after a compensated transfer
+    returns the same compensation result without re-debiting.
 
     Self-transfer is rejected before any state change via a guard step.
   """
@@ -187,10 +342,10 @@ policy TransferAtomicity {
     - given: >
         Transfer(from=A, to=B, amount=500, key="k1", now=T) where
         Wallet(A).balance=1000 and Wallet(B).balance=200.
-        Both Credit and Debit succeed.
+        Both Debit and Credit succeed.
       then: >
-        ok({ debit: JournalEntry(kind=TransferOut, delta=-500),
-             credit: JournalEntry(kind=TransferIn, delta=500) })
+        ok({ out: JournalEntry(kind=TransferOut, delta=-500),
+             in:  JournalEntry(kind=TransferIn,  delta=500) })
         Wallet(A).balance=500, Wallet(B).balance=700.
 
     - given: >
@@ -203,17 +358,17 @@ policy TransferAtomicity {
     - given: >
         Transfer(from=A, to=B, amount=500, key="k1", now=T).
         Wallet(A).Debit succeeds; Wallet(B).Credit fails (wallet not found).
-        Compensation: Wallet(A).Credit(500, TransferIn, B, "k1#compensate", T).
+        Compensation: Wallet(A).Credit(500, Compensation, B, "k1#compensate", T).
       then: >
         err(WalletNotFound).
-        Wallet(A).balance is restored to pre-transfer value.
+        Wallet(A).balance restored to pre-transfer value.
         Wallet(B) has no entry. Net effect on both wallets is zero.
 
     - given: >
         Transfer(from=A, to=B, amount=500, key="k1", now=T) replayed after
         a prior successful transfer with the same key.
       then: >
-        ok({ debit: <prior debit entry>, credit: <prior credit entry> })
+        ok({ out: <prior out entry>, in: <prior in entry> })
         No new entries appended. Balances unchanged.
 
     - given: >
@@ -223,30 +378,104 @@ policy TransferAtomicity {
         No journal entries appended. No state change.
 }
 
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
+// --- Events -----------------------------------------------------------------
 
-event WalletTopped {
+event UserSignedUp   { payload: { user: Id, email: Email, at: Timestamp },            delivery: eager }
+event UserLoggedIn   { payload: { user: Id, at: Timestamp },                           delivery: eager, order: by user }
+event SessionRevoked { payload: { token: Token, user: Id, at: Timestamp },             delivery: eager }
+
+event WalletFunded {
+  payload:  { wallet: Id, amount: Money, by: Id, at: Timestamp }
+  delivery: eager
+}
+
+event WalletDebited {
   payload:  { wallet: Id, amount: Money, at: Timestamp }
   delivery: eager
 }
 
-event WalletWithdrawn {
-  payload:  { wallet: Id, amount: Money, at: Timestamp }
-  delivery: eager
-}
-
-event WalletTransferred {
+event TransferExecuted {
   payload:  { from: Id, to: Id, amount: Money, at: Timestamp }
   delivery: eager
+  order:    by from
 }
 
-// ---------------------------------------------------------------------------
-// Flows
-// ---------------------------------------------------------------------------
+event ScheduledTransferQueued {
+  payload:  { schedule: Id, from: Id, to: Id, amount: Money, fire_at: Timestamp, at: Timestamp }
+  delivery: eager
+}
 
-flow Topup(
+event ScheduledTransferExecuted {
+  payload:  { schedule: Id, from: Id, to: Id, amount: Money, at: Timestamp }
+  delivery: eager
+}
+
+event ScheduledTransferCancelled {
+  payload:  { schedule: Id, by: Id, at: Timestamp }
+  delivery: eager
+}
+
+// --- Auth flows -------------------------------------------------------------
+
+flow Signup(email: Email, password: Password, now: Timestamp, key: Key)
+  -> Result<{ user: Id, token: Token }, WeakPassword | EmailTaken>
+{
+  intent: "Create a User account (role User), hash the password, issue an initial session. Idempotent on key."
+
+  step strength = PasswordStrength(password)
+                  rescue reject WeakPassword(reason)
+
+  step taken    = if any u in User where u.email == email
+                  then reject EmailTaken
+
+  step user     = ask User.create({
+                    id:      generate(),
+                    email,
+                    hash:    hash(password),
+                    role:    User,
+                    created: now,
+                  })
+
+  step session  = ask Session.create({
+                    token:   generate(),
+                    user:    user.id,
+                    role:    User,
+                    issued:  now,
+                    expires: now after 7d,
+                  })
+
+  emit UserSignedUp { user: user.id, email, at: now }
+  commit { user: user.id, token: session.token }
+}
+
+flow Login(email: Email, password: Password, now: Timestamp)
+  -> Result<{ user: Id, role: Role, token: Token }, InvalidCredentials>
+{
+  intent: "Authenticate by email + password. Issues a session with the user's current role. Errors are opaque."
+
+  step user    = ask User.findBy(email)  rescue reject InvalidCredentials
+  step ok      = if not verify(password, user.hash) then reject InvalidCredentials
+  step session = ask Session.create({
+                   token:   generate(),
+                   user:    user.id,
+                   role:    user.role,
+                   issued:  now,
+                   expires: now after 7d,
+                 })
+
+  emit UserLoggedIn { user: user.id, at: now }
+  commit { user: user.id, role: user.role, token: session.token }
+}
+
+flow Logout(token: Token, now: Timestamp) -> unit {
+  intent: "Revoke the session for the given bearer token. Idempotent."
+  step _ = ask Session(token).Revoke()
+  commit
+}
+
+// --- Wallet flows -----------------------------------------------------------
+
+flow FundWallet(
   wallet: Id,
   amount: Money,
   now:    Timestamp,
@@ -254,21 +483,22 @@ flow Topup(
 ) -> Result<JournalEntry, InvalidAmount | WalletNotFound>
 {
   intent: """
-    Credit a wallet with the given amount. Validates that amount > 0,
-    then forwards to Wallet(wallet).Credit. Idempotent on key: replaying
-    with the same key returns the prior entry without re-crediting.
-    Emits WalletTopped on first successful application.
+    Admin-only credit. Validates amount > 0, calls Wallet(wallet).AdminFund.
+    Idempotent on key. AdminFund is intentionally separate from Credit so audit
+    tooling can distinguish admin credits at the actor-message level.
   """
+
+  policies: [AdminGated]
 
   step _ = if amount <= 0 then reject InvalidAmount
 
   step w = ask Wallet.findBy(owner: wallet)
            rescue reject WalletNotFound
 
-  step entry = ask Wallet(wallet).Credit(amount, Topup, none, key, now)
+  step entry = ask Wallet(wallet).AdminFund(amount, self, key, now)
                rescue reject err
 
-  emit WalletTopped { wallet, amount, at: now }
+  emit WalletFunded { wallet, amount, by: self, at: now }
   commit entry
 }
 
@@ -277,14 +507,11 @@ flow Withdraw(
   amount: Money,
   now:    Timestamp,
   key:    Key,
-) -> Result<JournalEntry, InsufficientFunds | InvalidAmount | WalletNotFound>
+) -> Result<JournalEntry, InsufficientFunds | InvalidAmount | WalletNotFound | NotAuthorized>
 {
-  intent: """
-    Debit a wallet by the given amount. Validates that amount > 0 and that
-    the wallet exists, then forwards to Wallet(wallet).Debit. The actor
-    enforces the balance >= 0 invariant and rejects InsufficientFunds when
-    balance < amount. Idempotent on key.
-  """
+  intent: "Debit the caller's own wallet. WalletOwner enforces session.user == wallet.owner. Idempotent on key."
+
+  policies: [WalletOwner]
 
   step _ = if amount <= 0 then reject InvalidAmount
 
@@ -294,7 +521,7 @@ flow Withdraw(
   step entry = ask Wallet(wallet).Debit(amount, Withdrawal, none, key, now)
                rescue reject err
 
-  emit WalletWithdrawn { wallet, amount, at: now }
+  emit WalletDebited { wallet, amount, at: now }
   commit entry
 }
 
@@ -304,19 +531,16 @@ flow Transfer(
   amount: Money,
   now:    Timestamp,
   key:    Key,
-) -> Result<{ debit: JournalEntry, credit: JournalEntry },
-            InsufficientFunds | InvalidAmount | SelfTransfer | WalletNotFound>
+) -> Result<{ out: JournalEntry, in: JournalEntry },
+            InsufficientFunds | InvalidAmount | WalletNotFound | NotAuthorized | SelfTransfer>
 {
   intent: """
-    Move amount from wallet 'from' to wallet 'to' atomically. Guards:
-    amount > 0 and from != to. Steps: debit source, then credit
-    destination. If the credit fails, a compensating credit is applied to
-    the source using key+"#compensate" so the net effect on the source is
-    zero and the flow surfaces the original error. Governed by
-    TransferAtomicity. Idempotent on key.
+    Move amount from 'from' to 'to' atomically. WalletOwner enforces caller owns
+    source. Two-leg saga: debit source, credit dest; on credit failure compensate
+    source with kind Compensation and key+"#compensate". Governed by TransferAtomicity.
   """
 
-  policies: [TransferAtomicity]
+  policies: [WalletOwner, TransferAtomicity]
 
   step _ = if amount <= 0 then reject InvalidAmount
   step _ = if from == to  then reject SelfTransfer
@@ -327,83 +551,228 @@ flow Transfer(
   step dst = ask Wallet.findBy(owner: to)
              rescue reject WalletNotFound
 
-  // Leg 1: debit the source wallet. Insufficient funds rejects here
-  // before any credit is attempted.
   step out = ask Wallet(from).Debit(amount, TransferOut, to, key, now)
              rescue reject err
 
-  // Leg 2: credit the destination. On failure, compensate leg 1 by
-  // crediting the source with a deterministic derived key, then surface
-  // the original error. The compensation uses TransferIn kind so the
-  // reversal is visible in the journal and the (key, kind) idempotency
-  // invariant is not violated (TransferOut remains unique for 'key').
   step in = ask Wallet(to).Credit(amount, TransferIn, from, key, now)
-            rescue ask Wallet(from).Credit(amount, TransferIn, to, "${key}#compensate", now);
+            rescue ask Wallet(from).Credit(amount, Compensation, to, "${key}#compensate", now);
                    reject err
 
-  emit WalletTransferred { from, to, amount, at: now }
-  commit { debit: out, credit: in }
+  emit TransferExecuted { from, to, amount, at: now }
+  commit { out, in }
 }
 
-// ---------------------------------------------------------------------------
-// Controller
-// ---------------------------------------------------------------------------
+flow ScheduleTransfer(
+  from:    Id,
+  to:      Id,
+  amount:  Money,
+  fire_at: Timestamp,
+  now:     Timestamp,
+  key:     Key,
+) -> Result<{ schedule: Id }, InvalidAmount | WalletNotFound | NotAuthorized>
+{
+  intent: """
+    Queue a future peer-to-peer transfer. WalletOwner enforces the caller owns
+    the source wallet. Creates a ScheduledTransferActor with status Pending; the
+    recurring schedule picks it up when fire_at <= now.
+  """
+
+  policies: [WalletOwner]
+
+  step _ = if amount <= 0 then reject InvalidAmount
+  step _ = if fire_at <= now then reject InvalidAmount
+
+  step src = ask Wallet.findBy(owner: from)
+             rescue reject WalletNotFound
+
+  step dst = ask Wallet.findBy(owner: to)
+             rescue reject WalletNotFound
+
+  step sched = ask ScheduledTransferActor.create({
+                 id:      generate(),
+                 source:  from,
+                 dest:    to,
+                 amount,
+                 fire_at,
+                 key,
+                 status:  Pending,
+                 created: now,
+               })
+
+  emit ScheduledTransferQueued { schedule: sched.id, from, to, amount, fire_at, at: now }
+  commit { schedule: sched.id }
+}
+
+flow CancelScheduledTransfer(
+  schedule: Id,
+  now:      Timestamp,
+  key:      Key,
+) -> Result<unit, ScheduleNotFound | AlreadyExecuted | NotAuthorized>
+{
+  intent: "Cancel a Pending scheduled transfer. Caller must be the source owner (session.user == schedule.source)."
+
+  step sched = ask ScheduledTransferActor.findBy(id: schedule)
+               rescue reject ScheduleNotFound
+
+  step _ = if sched.source != self then reject NotAuthorized
+
+  ask ScheduledTransferActor(schedule).MarkCancelled()
+  rescue
+    if err == AlreadyExecuted then reject AlreadyExecuted
+    else reject err
+
+  emit ScheduledTransferCancelled { schedule, by: self, at: now }
+  commit
+}
+
+flow ExecuteScheduledTransfer(
+  schedule: Id,
+  now:      Timestamp,
+  key:      Key,
+) -> Result<{ out: JournalEntry, in: JournalEntry }, InsufficientFunds | ScheduleNotFound | AlreadyExecuted>
+{
+  intent: """
+    Execute a Pending scheduled transfer. Invoked by the top-level schedule.
+    Delegates to Transfer with the schedule's captured key — a double-fire is a
+    safe replay at the Transfer level. InsufficientFunds is surfaced without
+    marking the schedule Executed so the runtime can observe the failure.
+  """
+
+  step sched = ask ScheduledTransferActor.findBy(id: schedule)
+               rescue reject ScheduleNotFound
+
+  step _ = if sched.status != Pending then reject AlreadyExecuted
+
+  step result = Transfer(sched.source, sched.dest, sched.amount, now, sched.key)
+                rescue reject err
+
+  ask ScheduledTransferActor(schedule).MarkExecuted()
+
+  emit ScheduledTransferExecuted { schedule, from: sched.source, to: sched.dest, amount: sched.amount, at: now }
+  commit { out: result.out, in: result.in }
+}
+
+// --- Schedule — TIME axis ---------------------------------------------------
+
+// Fires every minute. Picks up Pending schedules whose fire_at has passed.
+// Re-firing the same record is a safe replay: the schedule's key is forwarded to Transfer.
+schedule ExecuteScheduledTransfer(schedule.id, now, generate())
+  every 1m
+  for any schedule in ScheduledTransferActor
+  where status == Pending and fire_at <= now
+
+// --- Controller -------------------------------------------------------------
 
 controller Wallets {
-  // All routes require bearer auth. 'self' is the authenticated wallet
-  // owner id. Cross-owner access is out of scope for this example.
+  policies: [BearerAuth]
 
-  GET /wallets/:id -> Wallet(id).balance {
-    auth: bearer
+  POST /signup -> Signup(email, password, now, idempotency_key) {
+    auth: none
+    body: { email: Email, password: Password, idempotency_key: Key }
     map:
-      ok(balance) -> 200 { balance }
-      err(NotFound) -> 404 { error: "wallet_not_found" }
+      ok(result)               -> 201 { user_id: result.user, token: result.token }
+      err(WeakPassword reason) -> 422 { error: "weak_password", reason }
+      err(EmailTaken)          -> 409 { error: "email_taken" }
   }
 
-  GET /wallets/:id/journal -> Wallet(id).journal {
-    auth: bearer
+  POST /login -> Login(email, password, now) {
+    auth: none
+    body: { email: Email, password: Password }
     map:
-      ok(entries) -> 200 { entries }
-      err(NotFound) -> 404 { error: "wallet_not_found" }
+      ok(result)              -> 200 { user_id: result.user, role: result.role, token: result.token }
+      err(InvalidCredentials) -> 401 { error: "invalid_credentials" }
   }
 
-  POST /wallets/:id/topup -> Topup(id, body.amount, now, body.idempotency_key) {
+  POST /logout -> Logout(bearer, now) {
     auth: bearer
-    body: {
-      amount:          Money,
-      idempotency_key: Key,
-    }
     map:
-      ok(entry)          -> 201 { entry }
-      err(InvalidAmount) -> 422 { error: "invalid_amount" }
+      ok(_) -> 204
+  }
+
+  // admin routes
+  POST /admin/wallets/:owner/fund -> FundWallet(owner, body.amount, now, body.idempotency_key) {
+    auth: bearer
+    policies: [AdminGated]
+    body: { amount: Money, idempotency_key: Key }
+    map:
+      ok(entry)           -> 201 { entry }
+      err(InvalidAmount)  -> 422 { error: "invalid_amount" }
       err(WalletNotFound) -> 404 { error: "wallet_not_found" }
+      err(NotAuthorized)  -> 403 { error: "not_authorized" }
   }
 
-  POST /wallets/:id/withdraw -> Withdraw(id, body.amount, now, body.idempotency_key) {
+  POST /admin/users/:id/promote -> User(id).Promote(body.role) {
     auth: bearer
-    body: {
-      amount:          Money,
-      idempotency_key: Key,
-    }
+    policies: [AdminGated]
+    body: { role: Role }
+    map:
+      ok(_)              -> 200 { promoted: true }
+      err(NotAuthorized) -> 403 { error: "not_authorized" }
+  }
+
+  // wallet reads
+  GET /wallets/me -> Wallet(self).balance {
+    auth: bearer
+    map:
+      ok(balance)   -> 200 { balance }
+      err(NotFound) -> 404 { error: "wallet_not_found" }
+  }
+
+  GET /wallets/me/journal -> Wallet(self).journal {
+    auth: bearer
+    map:
+      ok(entries)   -> 200 { entries }
+      err(NotFound) -> 404 { error: "wallet_not_found" }
+  }
+
+  // wallet writes
+  POST /wallets/me/withdraw -> Withdraw(self, body.amount, now, body.idempotency_key) {
+    auth: bearer
+    body: { amount: Money, idempotency_key: Key }
     map:
       ok(entry)              -> 201 { entry }
       err(InsufficientFunds) -> 409 { error: "insufficient_funds" }
       err(InvalidAmount)     -> 422 { error: "invalid_amount" }
       err(WalletNotFound)    -> 404 { error: "wallet_not_found" }
+      err(NotAuthorized)     -> 403 { error: "not_authorized" }
   }
 
+  // transfers
   POST /transfers -> Transfer(self, body.to, body.amount, now, body.idempotency_key) {
     auth: bearer
-    body: {
-      to:              Id,
-      amount:          Money,
-      idempotency_key: Key,
-    }
+    body: { to: Id, amount: Money, idempotency_key: Key }
     map:
-      ok(r)                  -> 201 { debit: r.debit, credit: r.credit }
+      ok(r)                  -> 201 { out: r.out, in: r.in }
       err(InsufficientFunds) -> 409 { error: "insufficient_funds" }
       err(InvalidAmount)     -> 422 { error: "invalid_amount" }
       err(SelfTransfer)      -> 422 { error: "self_transfer" }
       err(WalletNotFound)    -> 404 { error: "wallet_not_found" }
+      err(NotAuthorized)     -> 403 { error: "not_authorized" }
+  }
+
+  POST /transfers/schedule -> ScheduleTransfer(self, body.to, body.amount, body.fire_at, now, body.idempotency_key) {
+    auth: bearer
+    body: { to: Id, amount: Money, fire_at: Timestamp, idempotency_key: Key }
+    map:
+      ok(r)               -> 201 { schedule_id: r.schedule }
+      err(InvalidAmount)  -> 422 { error: "invalid_amount" }
+      err(WalletNotFound) -> 404 { error: "wallet_not_found" }
+      err(NotAuthorized)  -> 403 { error: "not_authorized" }
+  }
+
+  POST /transfers/schedule/:id/cancel -> CancelScheduledTransfer(id, now, body.idempotency_key) {
+    auth: bearer
+    body: { idempotency_key: Key }
+    map:
+      ok(_)                   -> 204
+      err(ScheduleNotFound)   -> 404 { error: "schedule_not_found" }
+      err(AlreadyExecuted)    -> 409 { error: "already_executed" }
+      err(NotAuthorized)      -> 403 { error: "not_authorized" }
+  }
+
+  GET /transfers/schedule -> ScheduledTransferActor.where(source == self and status == Pending) {
+    auth: bearer
+    map:
+      ok(schedules) -> 200 { schedules }
   }
 }

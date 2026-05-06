@@ -4,7 +4,7 @@
 // actor. Each is enforced by conformance tests generated from the spec.
 
 invariant SlotIntegrity:
-  "no two Confirmed bookings share a (listing, date) tuple"
+  "no two Confirmed bookings on the same listing have overlapping (from, to) time ranges"
 
 invariant CouponSingleUse:
   "a coupon is redeemed at most once per (coupon, user) pair"

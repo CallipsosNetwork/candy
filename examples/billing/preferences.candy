@@ -1,37 +1,49 @@
 // preferences.candy — per-target library and idiom preferences for billing.
 // AI codegen consumes these as hints, not requirements.
+//
+// Auth layer: SQLite + JWT + argon2 (lightweight, same as examples/auth).
+// Billing layer: Polar is the canonical provider (polar-go, polarsh-sdk,
+// polar-python, polar-rust). Stripe and Lemon stay as declared alternates.
 
 target go {
   when need database  use sqlc
   when need id        use ksuid
-  when need stripe    use stripe-go
+  when need hash      use argon2
+  when need jwt       use golang-jwt
   when need polar     use polar-go
+  when need stripe    use stripe-go
   when need lemon     use lemonsqueezy-go
 }
 
 target rust {
   when need database  use sqlx
   when need id        use uuid-v7
-  when need stripe    use async-stripe
+  when need hash      use argon2
+  when need jwt       use jsonwebtoken
   when need polar     use polar-rust
+  when need stripe    use async-stripe
   when need lemon     use lemonsqueezy-rust
 }
 
 target typescript {
   notes: "ESM only; tagged unions over class hierarchies"
-  when need queue     use bullmq
-  when need id        use cuid2
   when need database  use drizzle
+  when need id        use cuid2
+  when need hash      use argon2
+  when need jwt       use jsonwebtoken
+  when need queue     use bullmq
+  when need polar     use polarsh-sdk
   when need stripe    use stripe-node
-  when need polar     use polar-sdk
   when need lemon     use lemonsqueezy-node
 }
 
 target python {
-  when need queue     use celery
-  when need id        use ulid
   when need database  use sqlalchemy
+  when need id        use ulid
+  when need hash      use argon2-cffi
+  when need jwt       use pyjwt
+  when need queue     use celery
+  when need polar     use polar-python
   when need stripe    use stripe
-  when need polar     use polar-sdk
   when need lemon     use lemonsqueezy-py
 }

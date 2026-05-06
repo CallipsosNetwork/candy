@@ -1,23 +1,34 @@
 // preferences.candy — per-target library and idiom preferences for todo.
 // AI codegen consumes these as hints, not requirements.
+//
+// Inlines auth (JWT + argon2) because this example is standalone.
+// No queue or external integration needed — RBAC is candy-native policy.
 
 target go {
-  when need database  use sqlc
+  when need database  use sqlite
   when need id        use ksuid
+  when need hash      use argon2
+  when need jwt       use golang-jwt
 }
 
 target rust {
-  when need database  use sqlx
+  when need database  use rusqlite
   when need id        use uuid-v7
+  when need hash      use argon2
+  when need jwt       use jsonwebtoken
 }
 
 target typescript {
   notes: "ESM only; tagged unions over class hierarchies"
+  when need database  use better-sqlite3
   when need id        use cuid2
-  when need database  use drizzle
+  when need hash      use argon2
+  when need jwt       use jsonwebtoken
 }
 
 target python {
+  when need database  use sqlite3
   when need id        use ulid
-  when need database  use sqlalchemy
+  when need hash      use argon2-cffi
+  when need jwt       use pyjwt
 }

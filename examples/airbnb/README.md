@@ -1,7 +1,7 @@
 # airbnb — full marketplace example
 
 A short-stay rental marketplace: hosts list properties, guests book stays
-on date ranges, coupons reduce price, payments settle the booking, and
+on time ranges, coupons reduce price, payments settle the booking, and
 the platform takes a cut. This is the largest example in the repo — a
 multi-feature project with cross-feature event subscriptions, an external
 payment provider with multiple providers configured, and a canonical
@@ -24,6 +24,51 @@ transfer to host).
 - **Idempotency keys** on every replayable flow.
 - **Branded `Money`** and minor-units arithmetic; conservation invariants.
 - **Role-gated controllers** (admin endpoints for coupon management, host endpoints for listings).
+- **`schedule` + TIME-axis pattern** — `SendBookingReminder` fires every minute and picks up Confirmed bookings whose start is within 60 seconds, demonstrating the schedule predicate form from GRAMMAR.md alongside the webhook subscribe pattern already exercised by billing.
+
+## Test-mode design choices
+
+### Minute-granular slots instead of day-granular dates
+
+Real Airbnb books by day: a guest selects a check-in date and a check-out date, and the listing's calendar blocks those days. This example books by minute instead. A `TimeRange` is a pair of `Timestamp` values (UTC, minute or finer resolution). A booking might be 5 minutes long, 20 minutes long, or 60 minutes long.
+
+**Why:** eval cycles should complete in seconds, not days. If bookings were day-granular, an eval run that books a listing, waits for the booking to start, and then tests the reminder flow would need to wait 24+ hours. By making every bookable slot a minute, the same eval run can:
+
+1. List a property with `pricePerMinute`.
+2. Book it for the next 5–60 minutes.
+3. Watch the `SendBookingReminder` schedule fire at `T - 60s`.
+4. Confirm the `BookingReminderDue` event was emitted.
+5. Cancel or complete the booking.
+
+All within a single minute-long test run.
+
+### Pricing: `pricePerMinute` instead of `pricePerNight`
+
+`Listing.pricePerMinute: Money` replaces the day-granular `pricePerNight`. The booking total is computed as `pricePerMinute * (duration / 60)` where `duration` is the number of seconds between `dates.from` and `dates.to`. This is intentionally simple — it does not pro-rate partial minutes, and Money's `round: nearest` handles the integer truncation.
+
+In production you would rename back to `pricePerNight` and use a day-count multiplier; the spec structure is otherwise identical.
+
+### Cancellation thresholds
+
+The `CancellationPolicy` windows are scaled to seconds for the same reason:
+
+| Window          | Test (this file)         | Production equivalent |
+|-----------------|--------------------------|----------------------|
+| Free            | > 60s before check-in   | > 48h before         |
+| Partial         | 30s – 60s before         | 24h – 48h before     |
+| NonRefundable   | ≤ 30s before / started   | ≤ 24h / started      |
+
+### Pre-booking reminder via `schedule`
+
+`SendBookingReminder` fires every 1 minute and emits `BookingReminderDue` for each Confirmed booking whose `dates.from` is within the next 60 seconds and whose `reminder_sent` flag is false. After emitting, it calls `Booking.MarkReminderSent` to prevent duplicate delivery.
+
+`BookingReminderDue` is a feature-local event in `booking.candy`. In a multi-feature project, the notifications feature subscribes to it:
+
+```
+uses: feature booking for event BookingReminderDue
+```
+
+This keeps reminder logic in booking and delivery logic (Postmark, SendGrid, etc.) in notifications — neither feature depends on the other's internals.
 
 ## Project structure
 
@@ -39,9 +84,9 @@ examples/airbnb/
   externals.candy     ← Payments external actor (#20)
 
   auth.candy          ← User, Session, Signup/Login/Logout (#5)
-  listings.candy      ← Listing, Calendar, CRUD + HoldDates/ReleaseDates (#7)
+  listings.candy      ← Listing, Calendar, CRUD + HoldSlot/ReleaseSlot (#7)
   coupons.candy       ← Coupon, Validate/Redeem/Restore, admin CRUD (#9)
-  booking.candy       ← Booking, PlaceBooking saga, CancelBooking (#8)
+  booking.candy       ← Booking, PlaceBooking saga, CancelBooking, SendBookingReminder schedule (#8)
 ```
 
 Conformance evals live at `evals/airbnb/{auth,listings,booking,coupons}.hurl` (#10, #11).
@@ -56,8 +101,7 @@ file in this project must use these exact identifiers and shapes.
 ```
 type Id          opaque  { max: 64 }
 type Timestamp   instant { tz: utc }
-type Date        instant { tz: utc, precision: day }
-type DateRange   { from: Date, to: Date }
+type TimeRange   { from: Timestamp, to: Timestamp }
 type Email       string  { max: 320, format: rfc5322 }
 type Password    string  { policies: [PasswordStrength] }
 type PasswordHash opaque
@@ -76,6 +120,9 @@ enum BookingStatus  { Pending, Confirmed, Cancelled, Completed }
 enum ListingStatus  { Draft, Listed, Hidden }
 enum CouponKind     { Percent, FixedAmount }
 ```
+
+`Date` and `DateRange` have been removed. All time-ranged fields now use
+`TimeRange { from: Timestamp, to: Timestamp }`.
 
 ### Shared events (defined in `events.candy`)
 
@@ -96,16 +143,21 @@ event CouponCreated   { payload: { coupon: Id, code: CouponCode, at: Timestamp }
 event CouponRedeemed  { payload: { coupon: Id, user: Id, booking: Id, at: Timestamp }, delivery: eager, order: by coupon }
 event CouponRestored  { payload: { coupon: Id, booking: Id, at: Timestamp }, delivery: eager, order: by coupon }
 
-event BookingPlaced     { payload: { booking: Id, listing: Id, guest: Id, dates: DateRange, total: Money, at: Timestamp }, delivery: eager, order: by booking }
+event BookingPlaced     { payload: { booking: Id, listing: Id, guest: Id, dates: TimeRange, total: Money, at: Timestamp }, delivery: eager, order: by booking }
 event BookingConfirmed  { payload: { booking: Id, charge: ChargeId, at: Timestamp }, delivery: eager, order: by booking }
 event BookingCancelled  { payload: { booking: Id, reason: string, at: Timestamp }, delivery: eager, order: by booking }
 ```
+
+**Note for orchestrator:** `events.candy` still declares `BookingPlaced` with
+`dates: DateRange`. That file needs a follow-up edit to change `DateRange` →
+`TimeRange` in the `BookingPlaced` payload. No other events in `events.candy`
+reference `DateRange` or `Date`.
 
 ### System-wide invariants (defined in `invariants.candy`)
 
 ```
 invariant SlotIntegrity:
-  "no two Confirmed bookings share a (listing, date) tuple"
+  "no two Confirmed bookings share a (listing, slot) overlap"
 
 invariant CouponSingleUse:
   "a coupon is redeemed at most once per (coupon, user) pair"
@@ -116,6 +168,9 @@ invariant BookingHostMatchesListing:
 invariant SessionUserConsistency:
   "for any active Session s: User(s.user) exists and is verified"
 ```
+
+`invariants.candy` still uses `(listing, date) tuple` wording. The orchestrator
+should update it to `(listing, slot) overlap` to match TimeRange semantics.
 
 ### External actor (defined in `externals.candy`)
 
@@ -157,14 +212,14 @@ features `uses:` them by these names.
 | Feature   | Exports                                                                            |
 |-----------|------------------------------------------------------------------------------------|
 | auth      | `actor User, Session`; `flow Signup, Login, Logout, Verify`; `event UserSignedUp, UserVerified, UserLoggedIn, SessionRevoked` |
-| listings  | `actor Listing, Calendar`; `flow CreateListing, UpdateListing, ListListings, HoldDates, ReleaseDates`; `event ListingCreated, ListingUpdated, ListingHidden` |
+| listings  | `actor Listing, Calendar`; `flow CreateListing, UpdateListing, ListListings, HoldSlot, ReleaseSlot`; `event ListingCreated, ListingUpdated, ListingHidden` |
 | coupons   | `actor Coupon`; `flow CreateCoupon, DeleteCoupon, ValidateCoupon, RedeemCoupon, RestoreCoupon`; `event CouponCreated, CouponRedeemed, CouponRestored` |
-| booking   | `actor Booking`; `flow PlaceBooking, CancelBooking, CompleteBooking`; `event BookingPlaced, BookingConfirmed, BookingCancelled` |
+| booking   | `actor Booking`; `flow PlaceBooking, CancelBooking, CompleteBooking, SendBookingReminder`; `event BookingPlaced, BookingConfirmed, BookingCancelled, BookingReminderDue` |
 
 ### Cross-feature dependency graph
 
 ```
-booking  uses  feature listings  for HoldDates, ReleaseDates
+booking  uses  feature listings  for HoldSlot, ReleaseSlot
               feature coupons   for ValidateCoupon, RedeemCoupon, RestoreCoupon
               external Payments for Charge, Refund, Transfer
               external Payments for event ChargeSucceeded, ChargeFailed
@@ -201,11 +256,12 @@ Adapted from `examples/auth/auth.candy`. Adds:
 
 ### `listings` — Listing, Calendar, hold-and-release (#7)
 
-- `Listing(id)` — host id, status, title, location prose, base price (Money), max guests, calendar (derived from Calendar actor).
-- `Calendar(listing)` — sparse map of Date → BookingId. State is the held-set.
-- `HoldDates(listing, dates: DateRange, booking: Id, key: Key)` — exported for booking saga; rejects `DatesUnavailable` on overlap. Compensation: `ReleaseDates`.
-- `ReleaseDates(listing, dates: DateRange, key: Key)` — idempotent unhold.
-- `CreateListing` / `UpdateListing` host-gated; `ListListings(filter)` public.
+- `Listing(id)` — host id, status, title, location prose, `pricePerMinute: Money`, max guests.
+- `Calendar(listing)` — held-set of `HeldEntry { slot: TimeRange, booking: Id }`. Overlap check uses half-open interval: `entry.slot.from < slot.to and entry.slot.to > slot.from`.
+- `HoldSlot(listing, slot: TimeRange, booking: Id, key: Key)` — exported for booking saga; rejects `SlotUnavailable` on overlap. Compensation: `ReleaseSlot`.
+- `ReleaseSlot(listing, slot: TimeRange, key: Key)` — idempotent unhold.
+- `CreateListing` / `UpdateListing` host-gated; `ListListings(filter, host?, slot?)` public.
+- `ListListings` with `AvailableInRange` filter excludes listings with any held slot overlapping the query slot.
 - Emits `ListingCreated`, `ListingUpdated`, `ListingHidden`.
 
 ### `coupons` — Coupon, eligibility, redeem/restore (#9)
@@ -218,20 +274,21 @@ Adapted from `examples/auth/auth.candy`. Adds:
 - Admin-only `CreateCoupon`/`DeleteCoupon`.
 - Emits `CouponCreated`, `CouponRedeemed`, `CouponRestored`.
 
-### `booking` — Booking saga, compensate, payments (#8)
+### `booking` — Booking saga, compensate, payments, reminder schedule (#8)
 
-- `Booking(id)` — listing, guest, host, dates, status, total, charge?, coupon?
-- `PlaceBooking(listing, guest, dates, source: PaymentMethod, code: CouponCode?, now, key)` — the canonical saga:
-  1. `step held = ask Listing(listing).HoldDates(dates, self.id, key)` rescue reject `DatesUnavailable`.
+- `Booking(id)` — listing, guest, host, `dates: TimeRange`, status, total, charge?, coupon?, `reminder_sent: bool`.
+- `PlaceBooking(listing, guest, dates: TimeRange, source: PaymentMethod, code: CouponCode?, now, key)` — the canonical saga:
+  1. `step held = ask listings.HoldSlot(dates, booking_id, key)` rescue reject `SlotUnavailable`.
   2. `step discount = if code? then ask coupons.ValidateCoupon(code, guest, now) else 0`.
-  3. `step total = listing.price * dates.nights - discount`.
-  4. `step paid = ask Payments[Stripe].Charge(total, source, key)` rescue compensate held; reject `PaymentDeclined`. (Caller can swap `[Stripe]` → `[Polar]` or `[Lemon]`; the canonical example pins Stripe; a fallback variant `PlaceBookingWithFallback` is included to demonstrate the rescue chain.)
-  5. `step redeemed = if code? then ask coupons.RedeemCoupon(code, guest, self.id, now, key) else unit` rescue compensate paid (refund), held; reject `CouponConflict`.
-  6. `commit Booking { status: Pending, charge: paid, total, ... }`; `emit BookingPlaced`.
-  7. `subscribe ChargeSucceeded(self.charge) -> ConfirmBooking` (move to Confirmed).
-- `CancelBooking(booking, reason, now, key)` — guarded by `CancellationPolicy` (refund eligibility window), then refund, restore coupon, release dates, set Cancelled.
+  3. `step minutes = (dates.to - dates.from) / 60; step total = listing.pricePerMinute * minutes - discount`.
+  4. `step paid = ask Payments[Stripe].Charge(total, source, key)` rescue compensate held; reject `PaymentDeclined`.
+  5. `step redeemed = if code? then ask coupons.RedeemCoupon(...) else unit` rescue compensate paid, held.
+  6. `commit Booking { status: Pending, reminder_sent: false, ... }`; `emit BookingPlaced`.
+  7. `subscribe ChargeSucceeded -> Confirm` (move to Confirmed).
+- `CancelBooking` — guarded by `CancellationPolicy` (60s/30s test thresholds), then refund, restore coupon, release slot, set Cancelled.
+- `SendBookingReminder` flow + schedule — fires every 1 minute for Confirmed bookings within 60s of `dates.from`; emits `BookingReminderDue`; sets `reminder_sent = true`.
 - `BookingAtomicity` flow-scope policy: ensures all-or-nothing across the saga.
-- Emits `BookingPlaced`, `BookingConfirmed`, `BookingCancelled`.
+- Emits `BookingPlaced`, `BookingConfirmed`, `BookingCancelled`, `BookingReminderDue`.
 
 ### `externals` — Payments multi-provider (#20)
 

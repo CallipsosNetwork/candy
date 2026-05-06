@@ -1,7 +1,38 @@
-// auth.candy — signup and login.
+// auth.candy — the canonical auth reference for candy examples.
+//
+// Every other example that needs authentication (todo, wallet, billing,
+// notifications, airbnb) implements this same pattern inline. Codegen
+// targets a JWT library + lightweight SQLite for dev; production swaps
+// to Postgres + the same JWT semantics (see preferences.candy).
 //
 // Demonstrates: cross-actor flow, password policy, session lifecycle,
 // idempotency, time-bound entities, error variants, prose-as-spec.
+
+prose {
+  intent: """
+    Account signup, login, logout. Issues bearer tokens (JWT-shaped) on
+    successful login; verifies them on every authenticated request.
+
+    The Token type is opaque to the spec but is realized as a JWT by
+    codegen — signed with a server-side secret, payload includes user
+    id and role, exp = issued + 7d. Session.Validate parses the JWT,
+    checks signature + expiry + the revoked flag, and returns the
+    authenticated identity.
+
+    Backing store is intentionally light — SQLite for dev, the same
+    JWT semantics for production. No session-store lookup on the hot
+    path; the JWT is self-contained. Revocation goes through a small
+    revoked-tokens table that BearerAuth checks before trusting the
+    JWT claims.
+  """
+
+  exports:
+    actor User, Session
+    flow  Signup, Login, Logout
+    type  Email, Password, Token
+
+  policies: [BearerAuth]
+}
 
 type Id           opaque  { max: 64 }
 type Timestamp    instant { tz: utc }

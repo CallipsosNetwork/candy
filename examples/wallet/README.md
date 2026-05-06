@@ -1,169 +1,222 @@
-# wallet — money primitives, idempotency, and conservation invariants
+# wallet — admin-funded wallets, peer-to-peer transfers, scheduled transfers
 
-A per-user wallet supporting topup, withdraw, and peer-to-peer transfer.
-Money is integer minor units in USD; floats are forbidden by the
-language. Every state change appends a journal entry, and the wallet's
-balance is *derived* from the journal — there is no second copy of the
-truth. Replays are safe: every flow accepts an idempotency `key`.
+A per-user wallet with role-separated funding and inlined authentication.
+Auth (User + Session + Signup/Login/Logout + JWT) is inlined in `wallet.candy`
+following the multi-feature standalone-project model — no `use` dependency on
+a separate auth example.
 
-This is a pure in-spec example: no external payment SDKs, no providers,
-no schedules. The interesting properties are the two-party transfer
-saga, the journal-as-source-of-truth pattern, and the conservation
-invariants that make double-spend bugs expressible as predicates.
+Only an Admin may fund a wallet. A User may withdraw from their own wallet and
+transfer peer-to-peer. Any authenticated user may schedule a future transfer;
+a top-level `schedule` fires every minute and executes transfers whose
+`fire_at` has passed.
+
+Money is integer minor units in USD; floats are forbidden by the language.
+Every state change appends a `JournalEntry` and the balance is *derived* from
+`sum(journal.delta)` — there is no second copy of the truth.
+
+## Permission matrix
+
+| Operation              | Admin | User (owner) | User (non-owner) |
+|------------------------|:-----:|:------------:|:----------------:|
+| FundWallet             | yes   | no           | no               |
+| Withdraw               | no    | yes          | no               |
+| Transfer (source)      | no    | yes          | no               |
+| ScheduleTransfer       | no    | yes          | no               |
+| CancelScheduledTransfer| no    | yes (own)    | no               |
+| GetBalance / GetJournal| own   | own          | no               |
+| Promote user role      | yes   | no           | no               |
+
+Admin does not bypass `WalletOwner`. Even an Admin cannot withdraw or transfer
+from a wallet they do not own — the policy applies uniformly regardless of role.
 
 ## What this exercises
 
-- **Branded `Money` type** — `int { unit: minor, currency: USD,
-  round: nearest }` (GRAMMAR.md "type").
-- **Append-only journal in actor state** — `journal: [JournalEntry]`
-  with derived balance (GRAMMAR.md `derive`).
-- **Predicate invariants** — `balance >= 0` and
-  `balance == sum(journal.delta)` (GRAMMAR.md "invariant").
-- **Idempotency keys** — `key: Key` on every replayable message and
-  flow (GRAMMAR.md "Cross-cutting conventions").
-- **Flow-scope policy attachment** — `TransferAtomicity` on `Transfer`
-  (GRAMMAR.md "Policy attachment").
-- **Saga compensation** — `Transfer` debits source, then credits
-  destination; if the credit fails, the debit compensates.
-- **Multi-actor flow** — `Transfer` touches two `Wallet` instances.
+- **Inlined auth** — `actor User`, `actor Session`, `flow Signup/Login/Logout`
+  with JWT-shaped sessions and argon2id hashing (GRAMMAR.md `prose`, `actor`).
+- **Role enum** — `enum Role { Admin, User }` embedded in User state and
+  Session payload; role gates enforced via `AdminGated` and `WalletOwner`
+  policies.
+- **Branded `Money` type** — `int { unit: minor, currency: USD, round: nearest }`.
+- **Append-only journal** — `journal: [JournalEntry]` with derived balance.
+- **AdminFund accept** — structurally separate from `Credit` so the admin path
+  is unambiguous at the actor message level, not just via `EntryKind`.
+- **Saga compensation** — `Transfer` debits source, credits destination; on
+  credit failure a `Compensation` entry (distinct kind from `TransferIn`)
+  restores the source balance.
+- **Scheduled actor** — `ScheduledTransferActor` tracks each pending scheduled
+  transfer as a first-class entity, queryable independently of wallet state.
+- **Top-level schedule** — `schedule ExecuteScheduledTransfer ... every 1m`
+  is the TIME-axis exercise: the runtime picks up every `Pending` actor whose
+  `fire_at <= now` and executes the transfer (GRAMMAR.md "Scheduled flows").
+- **Policy attachment at multiple scopes** — `BearerAuth` at feature scope;
+  `AdminGated` at flow scope; `WalletOwner` at flow scope; `TransferAtomicity`
+  at flow scope.
 
 ## Domain model
 
 ### Types
 
 ```
-type Id        opaque  { max: 64 }
-type Timestamp instant { tz: utc }
-type Key       opaque  { max: 128 }
-type Money     int     { unit: minor, currency: USD, round: nearest }
+type Id           opaque  { max: 64 }
+type Timestamp    instant { tz: utc }
+type Key          opaque  { max: 128 }
+type Money        int     { unit: minor, currency: USD, round: nearest }
 
-enum EntryKind { Topup, Withdrawal, TransferOut, TransferIn }
-
-type JournalEntry {
-  id:          Id
-  kind:        EntryKind
-  delta:       Money     // positive for credits, negative for debits
-  counterpart: Id?       // peer wallet id for transfers
-  key:         Key       // idempotency key for the originating flow
-  at:          Timestamp
-}
+enum Role         { Admin, User }
+enum EntryKind    { Fund, Withdrawal, TransferOut, TransferIn, Compensation }
+enum ScheduleStatus { Pending, Executed, Cancelled }
 ```
 
 ### Actors
 
-**Wallet(id: Id)** — identified by `id`. State carries `owner: Id`,
-`journal: [JournalEntry]`, and `created: Timestamp`. The balance is
-*not* stored — it is `derive balance = sum(journal.delta)`. Two
-invariants:
+**User(id: Id)** — email, PasswordHash, role: Role (default User), created.
+Accepts `Promote(to: Role)` (admin-only at the controller route).
+
+**Session(token: Token)** — user, role, issued, expires, revoked.
+`Validate(now)` returns `{ user, role }` or rejects `SessionInvalid`.
+`Revoke()` is idempotent.
+
+**Wallet(owner: Id)** — `journal: [JournalEntry]`. Derived balance.
+Invariants: `balance >= 0`, `balance == sum(journal.delta)`, all `(key, kind)`
+pairs distinct. Accepts:
 
 ```
-invariant balance >= 0
-invariant balance == sum(journal.delta)
+AdminFund(amount, by: Id, key, now) -> Result<JournalEntry, ReplayMismatch>
+Credit(amount, kind, counterpart?, key, now) -> Result<JournalEntry, ReplayMismatch>
+Debit(amount, kind, counterpart?, key, now)  -> Result<JournalEntry, InsufficientFunds | ReplayMismatch>
 ```
 
-The second invariant is technically tautological by construction, but
-declaring it makes the intent explicit and gives codegen a hook to
-generate a self-check on every read in debug builds.
+`AdminFund` always appends `kind: Fund`. It cannot be called via `Credit`.
 
-Accepts:
-
-```
-accepts Credit(amount: Money, kind: EntryKind, counterpart: Id?, key: Key, now: Timestamp)
-  -> Result<JournalEntry, ReplayMismatch>
-
-accepts Debit(amount: Money, kind: EntryKind, counterpart: Id?, key: Key, now: Timestamp)
-  -> Result<JournalEntry, InsufficientFunds | ReplayMismatch>
-```
-
-Both are idempotent on `key`: replaying with the same key returns the
-prior journal entry. `ReplayMismatch` covers the case where the same key
-arrives with different parameters (a programming error in the caller).
+**ScheduledTransferActor(id: Id)** — source, dest, amount, fire_at, key,
+`status: ScheduleStatus = Pending`. Accepts `MarkExecuted` and `MarkCancelled`,
+both guarded to `Pending` state.
 
 ### Flows
 
 ```
-flow Topup(wallet: Id, amount: Money, key: Key, now: Timestamp)
-  -> Result<JournalEntry, InvalidAmount>
+flow Signup(email, password, now, key)
+  -> Result<{ user: Id, token: Token }, WeakPassword | EmailTaken>
 
-flow Withdraw(wallet: Id, amount: Money, key: Key, now: Timestamp)
-  -> Result<JournalEntry, InsufficientFunds | InvalidAmount>
+flow Login(email, password, now)
+  -> Result<{ user: Id, role: Role, token: Token }, InvalidCredentials>
 
-flow Transfer(from: Id, to: Id, amount: Money, key: Key, now: Timestamp)
-  -> Result<{ debit: JournalEntry, credit: JournalEntry },
-            InsufficientFunds | InvalidAmount | SelfTransfer>
+flow Logout(token, now) -> unit
+
+flow FundWallet(wallet: Id, amount, now, key)           [AdminGated]
+  -> Result<JournalEntry, InvalidAmount | WalletNotFound>
+
+flow Withdraw(wallet: Id, amount, now, key)             [WalletOwner]
+  -> Result<JournalEntry, InsufficientFunds | InvalidAmount | WalletNotFound | NotAuthorized>
+
+flow Transfer(from, to, amount, now, key)               [WalletOwner, TransferAtomicity]
+  -> Result<{ out, in: JournalEntry }, InsufficientFunds | InvalidAmount |
+            WalletNotFound | NotAuthorized | SelfTransfer>
+
+flow ScheduleTransfer(from, to, amount, fire_at, now, key)  [WalletOwner]
+  -> Result<{ schedule: Id }, InvalidAmount | WalletNotFound | NotAuthorized>
+
+flow CancelScheduledTransfer(schedule: Id, now, key)
+  -> Result<unit, ScheduleNotFound | AlreadyExecuted | NotAuthorized>
+
+flow ExecuteScheduledTransfer(schedule: Id, now, key)
+  -> Result<{ out, in: JournalEntry }, InsufficientFunds | ScheduleNotFound | AlreadyExecuted>
 ```
 
-`Transfer` is the saga: debit the source wallet, then credit the
-destination. If the credit fails for any reason, compensate the source
-debit by issuing a reversing credit with a derived key. The
-`TransferAtomicity` policy is attached at flow scope and asserts the
-two-leg-or-zero-legs property.
+### Schedule
 
-### Controllers
+```candy
+schedule ExecuteScheduledTransfer(schedule.id, now, generate())
+  every 1m
+  for any schedule in ScheduledTransferActor
+  where status == Pending and fire_at <= now
+```
 
-| Method | Path                   | Target                                  | Auth   | Statuses                         |
-|--------|------------------------|-----------------------------------------|--------|----------------------------------|
-| GET    | /wallets/:id           | Wallet(id).balance                      | bearer | 200 / 404                        |
-| GET    | /wallets/:id/journal   | Wallet(id).journal                      | bearer | 200                              |
-| POST   | /wallets/:id/topup     | Topup(id, amount, key, now)             | bearer | 201 / 422 InvalidAmount          |
-| POST   | /wallets/:id/withdraw  | Withdraw(id, amount, key, now)          | bearer | 201 / 422 / 409 InsufficientFunds|
-| POST   | /transfers             | Transfer(from, to, amount, key, now)    | bearer | 201 / 422 / 409 / 422 SelfTransfer|
+The schedule fires every minute and collects all `ScheduledTransferActor`
+instances that are `Pending` and past due. For each one it calls
+`ExecuteScheduledTransfer`, which delegates to `Transfer` using the
+schedule's own idempotency key — so a double-fire within the same minute
+is a safe replay at the `Transfer` level.
 
-Bearer auth scopes reads and writes to the authenticated wallet owner.
-Cross-owner reads are out of scope for this example.
+The 1m cadence is intentional: it makes the time-axis behavior easy to
+observe in local dev. A production deployment could use a lower-resolution
+schedule (e.g. `every 5m`) with no semantic change.
 
 ### Events
 
 ```
-event WalletTopped       { payload: { wallet: Id, amount: Money, at: Timestamp }, delivery: eager }
-event WalletWithdrawn    { payload: { wallet: Id, amount: Money, at: Timestamp }, delivery: eager }
-event WalletTransferred  { payload: { from: Id, to: Id, amount: Money, at: Timestamp }, delivery: eager }
+UserSignedUp, UserLoggedIn, SessionRevoked        // auth lifecycle
+WalletFunded                                      // admin funds wallet
+WalletDebited                                     // user withdraws
+TransferExecuted                                  // immediate p2p transfer
+ScheduledTransferQueued                           // schedule created
+ScheduledTransferExecuted                         // schedule fired and transferred
+ScheduledTransferCancelled                        // schedule cancelled by owner
 ```
 
-All three are `eager` — at-least-once delivery. Subscribers must be
-idempotent on the entry id.
+All events are `eager` (at-least-once). Subscribers must be idempotent on
+entry id.
 
 ### Policies
 
-- **TransferAtomicity** — flow-scope on `Transfer`. Prose: a transfer
-  either commits both legs or neither, regardless of failure mode.
-  Examples cover (a) successful round-trip, (b) credit-fails-after-debit
-  triggers compensation, (c) replay with same key returns the same
-  result without double-applying, (d) self-transfer rejects with
-  `SelfTransfer` before any state change.
+- **PasswordStrength** — type-scope on `Password`. Length, digit, blocklist.
+- **BearerAuth** — feature-scope. Validates JWT, binds `user` and `role`.
+  Signup / Login override with `auth: none`.
+- **AdminGated** — flow-scope on `FundWallet`; route-scope on `Promote`.
+  Admin → ok, User → `NotAuthorized`.
+- **WalletOwner** — flow-scope on `Withdraw`, `Transfer`, `ScheduleTransfer`.
+  Caller id must equal wallet owner. Admin role does not exempt.
+- **TransferAtomicity** — flow-scope on `Transfer`. Two-legs-or-zero saga with
+  deterministic compensation key `key+"#compensate"`. Preserved verbatim from
+  the base wallet spec, extended only to replace `TransferIn` compensation kind
+  with the new `Compensation` kind for clearer journal semantics.
+
+### Controllers
+
+| Method | Path                            | Flow / Target                          | Auth   | Policies          |
+|--------|---------------------------------|----------------------------------------|--------|-------------------|
+| POST   | /signup                         | Signup                                 | none   |                   |
+| POST   | /login                          | Login                                  | none   |                   |
+| POST   | /logout                         | Logout                                 | bearer |                   |
+| POST   | /admin/wallets/:owner/fund      | FundWallet                             | bearer | AdminGated        |
+| POST   | /admin/users/:id/promote        | User(id).Promote                       | bearer | AdminGated        |
+| GET    | /wallets/me                     | Wallet(self).balance                   | bearer |                   |
+| GET    | /wallets/me/journal             | Wallet(self).journal                   | bearer |                   |
+| POST   | /wallets/me/withdraw            | Withdraw                               | bearer |                   |
+| POST   | /transfers                      | Transfer                               | bearer |                   |
+| POST   | /transfers/schedule             | ScheduleTransfer                       | bearer |                   |
+| POST   | /transfers/schedule/:id/cancel  | CancelScheduledTransfer                | bearer |                   |
+| GET    | /transfers/schedule             | ScheduledTransferActor.where(...)      | bearer |                   |
 
 ### External dependencies
 
-None. This example is intentionally substrate-only — `id` and
-`database` from `preferences.candy`. The pedagogical point is that
-non-trivial financial logic does not require an external SDK.
+None. `preferences.candy` specifies SQLite + JWT + argon2 + a per-target
+scheduler. No payment SDK, no queue.
 
 ## Codegen targets
 
-All four targets supported. Per-target idioms:
-
-- **Go (chi)** — `Money` as `int64`; sqlc-generated journal queries.
-- **Rust (axum)** — `Money` as `i64` newtype with arithmetic methods;
-  `sqlx` transactions for the `Transfer` saga.
-- **TypeScript (hono)** — `Money` as `bigint` (avoid Number for cents
-  past 2^53); drizzle for the journal table.
-- **Python (fastapi)** — `Money` as `int`; `sqlalchemy` Session for
-  per-flow transactions.
+- **Go (chi)** — `Money` as `int64`; `gocron` for the 1m schedule.
+- **Rust (axum)** — `Money` as `i64` newtype; `tokio-cron-scheduler`.
+- **TypeScript (hono)** — `Money` as `bigint`; `node-cron`.
+- **Python (fastapi)** — `Money` as `int`; `apscheduler`.
 
 ## Conformance
 
-Eval lives at `evals/wallet/wallet.hurl` (tracked by #28). Cover:
+Cover in evals:
 
-- Happy path: topup → withdraw → transfer → balances reconcile.
-- Conservation: derived balance equals `sum(journal.delta)` after every
-  operation.
-- Insufficient funds: withdraw above balance returns 409 and does not
-  append a journal entry.
-- Self-transfer: rejects with `SelfTransfer` and does not touch state.
-- Idempotency: replaying topup/withdraw/transfer with the same `key`
-  returns the prior result; balance does not double-move.
-- Atomicity: simulated credit failure on transfer leaves both wallets
-  at their pre-transfer balance.
+- Admin can fund any wallet; non-admin funding returns 403.
+- User can withdraw from own wallet; cross-owner withdraw returns 403.
+- Admin withdraw on any wallet returns 403 (not an owner).
+- Transfer: owner → other user succeeds; non-owner → other user returns 403.
+- Self-transfer returns 422.
+- Insufficient funds: withdraw / transfer above balance returns 409, no journal entry.
+- Journal conservation: `sum(journal.delta) == balance` after every operation.
+- Idempotency: replaying any flow with the same key returns the prior result.
+- Transfer atomicity: simulated credit failure leaves both wallets at
+  pre-transfer balance; Compensation entry visible in source journal.
+- Schedule: ScheduleTransfer creates a Pending actor; after fire_at passes
+  the schedule fires, Transfer executes, actor moves to Executed.
+- CancelScheduledTransfer: Pending → Cancelled; re-cancel on Executed → 409.
 
 ## Issue tracking
 
