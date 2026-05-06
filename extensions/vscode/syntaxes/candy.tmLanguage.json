@@ -1,0 +1,105 @@
+{
+  "name": "candy",
+  "scopeName": "source.candy",
+  "fileTypes": ["candy"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#triple-strings" },
+    { "include": "#strings" },
+    { "include": "#durations" },
+    { "include": "#numbers" },
+    { "include": "#booleans" },
+    { "include": "#entity-keywords" },
+    { "include": "#action-keywords" },
+    { "include": "#time-keywords" },
+    { "include": "#condition-keywords" },
+    { "include": "#intent-keywords" },
+    { "include": "#primitives" },
+    { "include": "#builtins" },
+    { "include": "#http-methods" },
+    { "include": "#result-variants" },
+    { "include": "#pascal-types" }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.double-slash.candy",
+      "match": "//.*$"
+    },
+    "triple-strings": {
+      "name": "string.quoted.triple.candy",
+      "begin": "\"\"\"",
+      "end": "\"\"\"",
+      "patterns": [
+        { "include": "#interpolation" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.candy",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.candy",
+          "match": "\\\\."
+        },
+        { "include": "#interpolation" }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.embedded.expression.candy",
+      "match": "\\$\\{[^}]*\\}"
+    },
+    "durations": {
+      "name": "constant.numeric.duration.candy",
+      "match": "\\b\\d+(?:ms|s|m|h|d)\\b"
+    },
+    "numbers": {
+      "name": "constant.numeric.candy",
+      "match": "\\b\\d+\\b"
+    },
+    "booleans": {
+      "name": "constant.language.boolean.candy",
+      "match": "\\b(?:true|false)\\b"
+    },
+    "entity-keywords": {
+      "name": "keyword.control.entity.candy",
+      "match": "\\b(?:actor|external|state|config|providers|enum|type|derive|journal|audit|self|id|flow|controller|event|policy|target|prose|invariant)\\b"
+    },
+    "action-keywords": {
+      "name": "keyword.control.action.candy",
+      "match": "\\b(?:ask|tell|emit|emits|effect|commit|compensate|reject|step|accepts|subscribe|use|uses|exports)\\b"
+    },
+    "time-keywords": {
+      "name": "keyword.control.time.candy",
+      "match": "\\b(?:now|then|after|before|until|expire|schedule|at|rescue)\\b"
+    },
+    "condition-keywords": {
+      "name": "keyword.control.condition.candy",
+      "match": "\\b(?:if|else|when|require|given|unless|where|any|in|need)\\b"
+    },
+    "intent-keywords": {
+      "name": "keyword.control.intent.candy",
+      "match": "\\b(?:intent|examples|because)\\b"
+    },
+    "primitives": {
+      "name": "support.type.primitive.candy",
+      "match": "\\b(?:int|string|opaque|bool|bytes|instant|decimal|unit)\\b"
+    },
+    "builtins": {
+      "name": "support.function.builtin.candy",
+      "match": "\\b(?:generate|hash|verify|sum|length|last|secret)\\b"
+    },
+    "http-methods": {
+      "name": "keyword.other.http.candy",
+      "match": "\\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\b"
+    },
+    "result-variants": {
+      "name": "support.constant.result.candy",
+      "match": "\\b(?:ok|err|Ok|Err|Result|Option|Some|None)\\b"
+    },
+    "pascal-types": {
+      "name": "entity.name.type.candy",
+      "match": "\\b[A-Z][A-Za-z0-9]*\\b"
+    }
+  }
+}

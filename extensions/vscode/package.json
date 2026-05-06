@@ -1,0 +1,36 @@
+{
+  "name": "candy-language",
+  "displayName": "candy",
+  "description": "Syntax highlighting for the candy specification language. Five word-axes — ENTITY, ACTION, TIME, CONDITION, INTENT — each get a distinct scope so colorschemes can color by axis.",
+  "version": "0.1.0",
+  "publisher": "candy",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "candy",
+        "aliases": ["candy"],
+        "extensions": [".candy"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "candy",
+        "scopeName": "source.candy",
+        "path": "./syntaxes/candy.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "candy",
+        "path": "./snippets/candy.json"
+      }
+    ]
+  }
+}

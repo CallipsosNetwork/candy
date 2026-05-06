@@ -1,0 +1,95 @@
+{
+  "actor": {
+    "prefix": "actor",
+    "body": [
+      "actor ${1:Name}(id: ${2:Id}) {",
+      "  state {",
+      "    ${3:field}: ${4:Type} = ${5:default}",
+      "  }",
+      "",
+      "  invariant ${6:\"invariant prose\"}",
+      "",
+      "  accepts ${7:Message}(${8:arg}: ${9:Type}) -> Result<${10:Ok}, ${11:Err}> {",
+      "    intent: \"${12:What this message does and why.}\"",
+      "    require: ${13:precondition}  rescue reject ${14:ErrVariant}",
+      "    effect:  ${15:field} = ${16:value}",
+      "    commit",
+      "  }",
+      "}"
+    ],
+    "description": "actor block skeleton"
+  },
+  "flow": {
+    "prefix": "flow",
+    "body": [
+      "flow ${1:Name}(${2:arg}: ${3:Type}, now: Timestamp, key: Key) -> Result<${4:Ok}, ${5:Err}> {",
+      "  intent: \"\"\"",
+      "    ${6:Describe the purpose of this flow.}",
+      "  \"\"\"",
+      "",
+      "  step ${7:name} = ask ${8:Actor}(${9:id}).${10:Message}(${11:args})",
+      "                  rescue reject ${12:Err}",
+      "",
+      "  commit ${13:value}",
+      "}"
+    ],
+    "description": "flow block skeleton"
+  },
+  "controller": {
+    "prefix": "controller",
+    "body": [
+      "controller ${1:Name} {",
+      "  policies: [BearerAuth]",
+      "",
+      "  ${2:POST} /${3:path} -> ${4:Flow}(${5:args}) {",
+      "    auth: bearer",
+      "    body: {",
+      "      ${6:field}: ${7:Type},",
+      "    }",
+      "    map:",
+      "      ok(${8:r})     -> ${9:200} ${10:r}",
+      "      err(${11:Err}) -> ${12:400} { error: \"${13:error_name}\" }",
+      "  }",
+      "}"
+    ],
+    "description": "controller block skeleton"
+  },
+  "prose": {
+    "prefix": "prose",
+    "body": [
+      "prose {",
+      "  intent: \"\"\"",
+      "    ${1:What this feature does and why it exists.}",
+      "  \"\"\"",
+      "",
+      "  exports:",
+      "    ${2:actor} ${3:Name}",
+      "",
+      "  uses:",
+      "    ${4:external} ${5:Service} for ${6:Op}",
+      "",
+      "  policies: [${7:BearerAuth}]",
+      "}"
+    ],
+    "description": "prose block skeleton with intent/exports/uses/policies"
+  },
+  "external": {
+    "prefix": "external",
+    "body": [
+      "external actor ${1:Name} {",
+      "  intent: \"${2:Third-party service description.}\"",
+      "",
+      "  providers: [${3:ProviderA}, ${4:ProviderB}]",
+      "",
+      "  config ${3:ProviderA}: api_key: secret \"${5:PROVIDER_A_KEY}\"",
+      "  config ${4:ProviderB}: api_key: secret \"${6:PROVIDER_B_KEY}\"",
+      "",
+      "  accepts ${7:Op}(${8:arg}: ${9:Type}, key: Key)",
+      "    -> Result<${10:OkType}, ${11:ErrVariant} | NetworkError>",
+      "",
+      "  emits ${12:EventName} { ${13:field}: ${14:Type}, at: Timestamp }",
+      "}"
+    ],
+    "description": "external actor block skeleton with providers and config"
+  }
+}
