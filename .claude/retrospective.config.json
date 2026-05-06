@@ -1,0 +1,24 @@
+{
+  "version": "0.1",
+  "retrospective_dir": ".retrospective",
+  "providers": {
+    "gsd": { "enabled": false, "reason": "no .planning/" },
+    "github": { "enabled": true, "repo": "CallipsosNetwork/candy" },
+    "git": { "enabled": true },
+    "manual": { "enabled": true }
+  },
+  "phase_model": {
+    "type": "milestone",
+    "current": "M1",
+    "current_completed_at": "2026-05-06"
+  },
+  "summary_tracker": {
+    "auto_update": true,
+    "file": "SUMMARY.md"
+  },
+  "stakeholder_report": {
+    "auto_generate": true
+  },
+  "hook_mode": "manual",
+  "_notes": "First-run minimal config. Hooks not registered. /retro init can register PostToolUse + SessionStart hooks if hook_mode is changed to auto or prompt."
+}
