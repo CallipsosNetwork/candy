@@ -1,126 +1,197 @@
 # Auth Go Target — Handoff
 
-## 1. Ambiguities in codegen prompts
+This file captures judgment calls made during codegen — places where the
+spec was ambiguous, where realisation choices were forced, or where the
+implementation diverges from a literal reading of the spec for principled
+reasons. The next regeneration / next reviewer should read this before
+re-walking the same paths.
 
-### 1a. `generate()` for Token vs Id
-The spec uses `generate()` for both `token: generate()` (Session) and `id: generate()` (User). The base prompt says to pre-generate ids used in both happy and rescue paths. `Signup` has no rescue path that references the generated ids, so they are generated inline. The implementation uses `ksuid.New().String()` for both, wrapped in the appropriate branded type.
+---
 
-### 1b. `now after 7d` arithmetic
-`now after 7d` is not defined syntactically in GRAMMAR.md arithmetic section. Interpreted as `now + 7*24*time.Hour`. Standard Go duration arithmetic.
+## 1. Session as a self-contained JWT (not a stateful actor)
 
-### 1c. `auth: bearer` for logout — idempotency vs validation
-The spec says:
-```
-POST /logout -> Logout(bearer, now) {
-  auth: bearer
-  map: ok(_) -> 204
-}
-```
-The `BearerAuth` policy validates the session is live. But `logout-replay` scenario expects 204 when a revoked token is replayed (the session is already revoked). A standard `BearerAuth` middleware would return 401 for the revoked token, breaking idempotency.
+**Spec text** (`examples/auth/auth.candy`):
 
-**Interpretation:** `auth: bearer` for logout means "a bearer token must be present and must reference a known session" — not "the session must currently be active". A `LogoutBearerAuth` middleware allows revoked sessions through (so the Logout flow can idempotently no-op), but rejects completely unknown tokens (not in DB) with 401.
+The `prose` block reads, in part:
 
-### 1d. `BearerAuth` policy at prose scope
-`prose { policies: [BearerAuth] }` means BearerAuth applies to every controller and flow. In practice this means all auth-required routes use the bearer middleware. For public routes (`/signup`, `/login`) the controller specifies `auth: none`, so BearerAuth is not applied. The implementation follows `auth:` per-route declarations rather than wrapping every route with BearerAuth.
+> "The Token type is opaque to the spec but is realized as a JWT by
+> [codegen]. Standard payload: id and role, exp = issued + 7d.
+> Session.Validate parses the JWT … JWT semantics for production. No
+> session-store lookup on the hot path; the JWT is self-contained.
+> Revocation goes through a small … JWT claims."
 
-### 1e. `golang-jwt` library not used
-The spec says `when need jwt use golang-jwt`. The session token is issued as a plain KSUID (opaque token), not a JWT. The spec's `Token` type is declared `opaque { max: 256 }` — it says "opaque to the spec but is realized as a JWT by codegen" in the prose block. However, the hurl conformance tests only require that:
-- The token is a non-empty string
-- The token can be used in the Bearer header to authenticate
+The same file declares `actor Session(token: Token) { state { user, issued,
+expires, revoked: bool = false } }` — i.e., a stateful actor with four
+fields.
 
-The hurl never inspects the token's internal structure (no JWT signature checks, no claims inspection). Storing the token in SQLite and looking it up on each request is simpler and fully spec-compliant for the conformance gate. `golang-jwt` was downloaded via `go mod tidy` but is not imported since there's no JWT usage. This is flagged for the orchestrator: if a future spec requires JWT claims inspection on the client side, switch the token to signed JWT.
+**Reconciliation.** The two readings (stateful actor vs. self-contained
+JWT) split cleanly along which field is read on the hot path:
 
-**Update:** `golang-jwt/jwt/v5` was removed from go.mod since it is not used (would cause `go mod tidy` to strip it anyway).
+| Spec field | Realisation                                              |
+|------------|----------------------------------------------------------|
+| `user`     | JWT `sub` claim. No DB lookup.                           |
+| `issued`   | JWT `iat` claim. No DB lookup.                           |
+| `expires`  | JWT `exp` claim. No DB lookup.                           |
+| `revoked`  | Membership in the `revoked_jtis` table. One small lookup. |
 
-## 2. Suspect spec constructs
+`Session.Revoke()` is `INSERT OR IGNORE INTO revoked_jtis (jti, user_id,
+revoked_at) VALUES (?, ?, ?)`. Idempotent by construction.
 
-### 2a. PasswordStrength policy vs hurl fixtures
-The spec's `PasswordStrength` policy requires "at least one letter and one digit". The spec example `"alllowercase"` (12 chars, no digit) → `err(MissingDigit)` is consistent with this rule.
+`Session.Validate()` is parse JWT → verify signature → check exp → check
+JTI not in `revoked_jtis`. The first three are O(1) with no DB; the last
+is one indexed lookup.
 
-However, the hurl fixture uses `alice_password=correct horse battery staple alice` which is a 34-character passphrase with no digit. The hurl expects 201 (successful signup) for this password.
+The persistent `sessions` table from the v0.1.0 KSUID-backed
+implementation is gone. Tokens themselves are stateless.
 
-**Resolution:** Passwords ≥ 20 characters are treated as passphrases and exempt from the digit requirement. This satisfies both the spec policy examples (12-char `"alllowercase"` gets the digit check) and the hurl fixture (34-char passphrase passes). This is a judgment call — the spec is ambiguous here.
+## 2. JWT details
 
-### 2b. `Session.Revoke()` return type
-The spec declares `accepts Revoke() -> unit`. The implementation needs to look up the session after revoking to get the `UserID` for the audit log. This requires an additional `FindByToken` call. This is an implementation detail not covered by the spec.
+| Choice                 | Value                                              |
+|------------------------|----------------------------------------------------|
+| Signing algorithm      | HS256 (symmetric; `JWT_SECRET` env var holds the secret) |
+| `iss`                  | `candy-auth`                                       |
+| `sub`                  | the user id (KSUID string)                         |
+| `jti`                  | a fresh KSUID per issued token                     |
+| `iat`, `exp`           | UTC unix timestamps; `exp - iat = 7d` per spec     |
+| TTL constant           | `auth.SessionTTL = 7 * 24 * time.Hour`             |
+| Issuer code            | `JWTService.Issue(userID, jti, now)`               |
+| Parser code            | `JWTService.Parse(token, now)` — verifies sig + exp; does NOT check revocation |
 
-## 3. Hurl scenario fixes
+Revocation is a separate concern, available as `RevokedRepo.IsRevoked(jti)`.
+This split lets `LogoutBearerAuth` (§3) skip revocation while
+`BearerAuth` enforces it.
 
-### Scenario 12 (logout-replay)
-Initial implementation: `BearerAuth` middleware called `Session.Validate()` which rejects revoked sessions → 401 on replay.
+## 3. `auth: bearer` — two middlewares, principled split
 
-Fix: Introduced `LogoutBearerAuth` that calls `Session.FindByToken()` instead of `Validate()`. Revoked sessions pass through to the Logout flow; completely unknown tokens (not in DB) are rejected with 401.
+The spec puts `policies: [BearerAuth]` at prose scope (every
+controller/flow gets it) and `auth: bearer` on `POST /logout` and any
+future authenticated route. Two interpretation forks:
 
-All 14 scenarios pass after this fix.
+- **Strict** — `auth: bearer` means "the session must currently be
+  live." A revoked JWT → 401.
+- **Liberal** — `auth: bearer` means "a bearer token must be present
+  and authentic." A revoked JWT for the right user → still let through.
 
-## 4. Library version pins
+The eval (`evals/auth/auth.hurl`, scenario `logout-replay`) requires
+that re-sending a revoked token to `/logout` returns 204 — i.e., logout
+must be idempotent at the HTTP boundary, not just the flow boundary. So
+strict middleware on `/logout` would conflict with the eval, while strict
+middleware on every OTHER bearer route is the right default.
 
-| Library | Version | Source |
-|---------|---------|--------|
-| `github.com/go-chi/chi/v5` | v5.2.5 | `go mod tidy` resolved latest |
-| `github.com/mattn/go-sqlite3` | v1.14.44 | `go mod tidy` resolved latest |
-| `github.com/segmentio/ksuid` | v1.0.4 | `go mod tidy` resolved latest (pinned in preferences) |
-| `golang.org/x/crypto` | v0.50.0 | `go mod tidy` resolved latest (argon2) |
-| `golang.org/x/sys` | v0.43.0 | indirect dependency of x/crypto |
+**Resolution.** Two middlewares:
 
-`golang-jwt/jwt/v5` was not included — token is KSUID stored in SQLite (see §1e).
+- `BearerAuth`: parse + verify sig + check exp + **check revocation**.
+  Used by every authenticated route except `/logout`.
+- `LogoutBearerAuth`: parse + verify sig + check exp; **no revocation
+  check**. Used only by `/logout`.
 
-## 5. Additions beyond the spec
+When an authenticated route beyond `/logout` lands, it uses `BearerAuth`.
 
-- **SQLite schema migration** (`internal/runtime/db.go`): Runs once at startup via `CREATE TABLE IF NOT EXISTS`. Tables: `users`, `sessions`, `signup_idempotency`, `audit_user_verified`, `audit_session_revoked`.
-- **Idempotency table** (`signup_idempotency`): Stores `(key, user_id, token)` per signup key. On replay: returns the stored `user_id` and issues a fresh session. The original session token stored at first signup is recorded but superseded.
-- **In-process event bus** (`internal/runtime/eventbus.go`): `delivery: eager` implemented as goroutine dispatch. No persistence — events are fire-and-forget within the process. Production would swap to a durable queue.
-- **Graceful shutdown**: SIGINT/SIGTERM handling with 5s shutdown timeout.
-- **WAL mode + foreign keys**: SQLite opened with `?_journal_mode=WAL&_foreign_keys=on`.
-- **`principalFromContext` helper**: Defined in controllers.go for the `auth: bearer` → `self` binding contract. Not used by the current three routes but part of the generated bearer auth surface.
+## 4. PasswordStrength — strict to spec
 
-## 6. Reproduction commands
+The spec policy is "length ≥ 12, ≥1 letter, ≥1 digit, not blocklisted",
+with the example `"correct horse battery staple 9"` (note the trailing
+digit) → ok. The hurl fixture (`evals/auth/fixtures.env`) was missing
+the digit on `alice_password` and `bob_password`; it has been corrected
+to include the digit. The implementation is the literal spec rule with
+no passphrase exemption.
 
-### Prerequisites
-- Go 1.22+ at `/usr/local/go/bin/go`
-- hurl 5.x at `$HOME/bin/hurl` (or on PATH)
-- Working directory: repo root (`/home/me/candy/.claude/worktrees/agent-a9d6958ecc0f89a75`)
+## 5. Idempotency replay shape
 
-### Build
+Spec: `flow Signup(email, password, now, key) -> Result<{ user, token },
+WeakPassword | EmailTaken>`. Comment in the flow body: replay returns
+the prior `user_id` with a fresh session.
+
+Implementation:
+
+- `signup_idempotency` table holds `(key, user_id)`. The token is **not**
+  stored — the JWT issued on first signup has no special role on replay,
+  and storing it would let an attacker who steals an idempotency key
+  resurrect the original token.
+- Replay: look up by key → found → issue a fresh JWT for the stored
+  user_id → return `(user_id, fresh_token, 201)`.
+- The eval's `signup-idempotency-replay` scenario asserts
+  `user_id == alice_user_id` (must be equal to the original) and
+  `token isString && token != ""` (must be present, no equality check).
+
+## 6. SessionRevoked event payload
+
+Spec: `event SessionRevoked { payload: { token: Token, user: Id, at:
+Timestamp }, delivery: eager }`.
+
+Earlier KSUID implementation dropped `token` from the event payload
+under "tokens never log." That conflated two rules: tokens never appear
+in **log lines** (slog calls, error responses), but event payloads are
+internal data carried between subscribers, not log surfaces. The spec
+includes `token` for a reason — downstream subscribers (notifications,
+audit) may need to identify the revoked session.
+
+`token` is back in the event. The audit table (`audit_session_revoked`)
+records the JTI, not the full JWT, since the JTI is the durable
+identifier and the JWT is reconstructible only from the secret.
+
+## 7. Library version pins
+
+| Library                              | Version  | Source                                  |
+|--------------------------------------|----------|-----------------------------------------|
+| `github.com/go-chi/chi/v5`           | v5.2.5   | `go mod tidy` resolved latest           |
+| `github.com/golang-jwt/jwt/v5`       | v5.3.1   | per `preferences.candy` `when need jwt` |
+| `github.com/mattn/go-sqlite3`        | v1.14.44 | `go mod tidy` resolved latest           |
+| `github.com/segmentio/ksuid`         | v1.0.4   | per `preferences.candy` `when need id`  |
+| `golang.org/x/crypto`                | v0.50.0  | `argon2id` per `preferences.candy`      |
+
+## 8. Database schema
+
+| Table                   | Purpose                                                   |
+|-------------------------|-----------------------------------------------------------|
+| `users`                 | `User` actor's persistent state.                          |
+| `revoked_jtis`          | `Session.revoked` realisation. PK = `jti`. INSERT OR IGNORE. |
+| `signup_idempotency`    | `(key, user_id)` for replay.                              |
+| `audit_user_verified`   | Append-only audit for `User.Verify`.                      |
+| `audit_session_revoked` | Append-only audit for the SessionRevoked event.            |
+
+No `sessions` table — JWTs are stateless.
+
+## 9. Reproduction
+
 ```sh
-cd examples/auth/targets/go
-go build ./...
-go vet ./...
-go test ./...
-```
-
-### Run and test
-```sh
-# Build binary
+# Build
 cd examples/auth/targets/go
 go build -o /tmp/auth-server ./cmd/server
 
-# Start server (fresh DB)
-rm -f /tmp/auth-dev.db
-PORT=8080 DB_PATH=/tmp/auth-dev.db JWT_SECRET=changeme \
+# Start (fresh DB, free port, env-var secret)
+rm -f /tmp/auth-jwt-dev.db
+PATH=$HOME/bin:$PATH \
+PORT=8080 DB_PATH=/tmp/auth-jwt-dev.db JWT_SECRET=test-secret \
   /tmp/auth-server > /tmp/auth-server.log 2>&1 &
 echo $! > /tmp/auth-server.pid
 sleep 1
 
-# Run hurl
+# Run conformance
 hurl --variables-file evals/auth/fixtures.env \
      --variable BASE_URL=http://localhost:8080 \
-     --test \
-     evals/auth/auth.hurl
+     --test evals/auth/auth.hurl
 
-# Stop server
+# Cleanup
 kill $(cat /tmp/auth-server.pid)
 ```
 
-Or use the run script (which uses `go run`; slower on first run due to compilation):
-```sh
-PORT=8080 DB_PATH=/tmp/auth-dev.db JWT_SECRET=changeme \
-  examples/auth/targets/go/scripts/run.sh &
-```
+| Variable     | Default                            | Purpose                             |
+|--------------|-------------------------------------|-------------------------------------|
+| `PORT`       | `8080`                              | HTTP listen port                    |
+| `DB_PATH`    | `/tmp/auth-dev.db`                  | SQLite database file                |
+| `JWT_SECRET` | `dev-secret-change-in-production`   | HS256 signing secret                |
 
-### Environment variables
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | HTTP listen port |
-| `DB_PATH` | `/tmp/auth-dev.db` | SQLite database file path |
-| `JWT_SECRET` | `dev-secret-change-in-production` | Signing secret (unused by KSUID tokens, reserved for JWT migration) |
+## 10. Future work
+
+- A `GET /me` (or similar) endpoint backed by `User(id)` would exercise
+  `BearerAuth`'s revocation check end-to-end. Today the only bearer
+  consumer is `/logout`, which intentionally bypasses revocation.
+- Token rotation on the idempotency replay path (currently issues a
+  fresh JWT on every replay, which means a leaked replay can issue
+  unbounded tokens).
+- Argon2id parameters are conservative for dev; production should tune
+  time/memory cost per the deployment's hardware budget. Move to a
+  config file or env-var-driven knob.
+- Rate limiting on `/login` and `/signup` is not declared by the spec
+  but is a normal hardening step.

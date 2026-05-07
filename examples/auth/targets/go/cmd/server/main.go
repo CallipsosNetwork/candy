@@ -41,10 +41,10 @@ func main() {
 	bus := runtime.NewEventBus()
 	deps := authpkg.Deps{
 		Users:       authpkg.NewUserRepo(db),
-		Sessions:    authpkg.NewSessionRepo(db),
+		JWT:         authpkg.NewJWTService(jwtSecret, "candy-auth", authpkg.SessionTTL),
+		Revoked:     authpkg.NewRevokedRepo(db),
 		Idempotency: authpkg.NewIdempotencyRepo(db),
 		EventBus:    bus,
-		JWTSecret:   jwtSecret,
 	}
 
 	// Build router.

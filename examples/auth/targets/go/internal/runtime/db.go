@@ -27,6 +27,8 @@ func OpenDB(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
+// Schema. Sessions are JWT-stateless — no `sessions` table. The only
+// session-related state is the small revocation list.
 const schema = `
 CREATE TABLE IF NOT EXISTS users (
 	id       TEXT PRIMARY KEY,
@@ -36,32 +38,31 @@ CREATE TABLE IF NOT EXISTS users (
 	verified INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
-	token   TEXT PRIMARY KEY,
-	user_id TEXT NOT NULL,
-	issued  TEXT NOT NULL,
-	expires TEXT NOT NULL,
-	revoked INTEGER NOT NULL DEFAULT 0
+-- Revoked JTIs. Membership = revoked. INSERT OR IGNORE makes Logout idempotent.
+CREATE TABLE IF NOT EXISTS revoked_jtis (
+	jti        TEXT PRIMARY KEY,
+	user_id    TEXT NOT NULL,
+	revoked_at TEXT NOT NULL
 );
 
--- idempotency store for Signup
+-- Idempotency store for Signup. The JWT itself is fresh on each replay,
+-- so we only persist the user id.
 CREATE TABLE IF NOT EXISTS signup_idempotency (
 	key     TEXT PRIMARY KEY,
-	user_id TEXT NOT NULL,
-	token   TEXT NOT NULL
+	user_id TEXT NOT NULL
 );
 
--- append-only audit for UserVerified
+-- Append-only audit for UserVerified.
 CREATE TABLE IF NOT EXISTS audit_user_verified (
 	id      INTEGER PRIMARY KEY AUTOINCREMENT,
 	user_id TEXT NOT NULL,
 	at      TEXT NOT NULL
 );
 
--- append-only audit for SessionRevoked
+-- Append-only audit for SessionRevoked. The jti column holds the revoked JWT's id.
 CREATE TABLE IF NOT EXISTS audit_session_revoked (
 	id      INTEGER PRIMARY KEY AUTOINCREMENT,
-	token   TEXT NOT NULL,
+	jti     TEXT NOT NULL,
 	user_id TEXT NOT NULL,
 	at      TEXT NOT NULL
 );

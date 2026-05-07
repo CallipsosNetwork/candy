@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"time"
 
+	jwt "github.com/golang-jwt/jwt/v5"
+
 	"github.com/CallipsosNetwork/candy/examples/auth/targets/go/internal/shared"
 )
 
@@ -109,113 +111,132 @@ func scanUser(row *sql.Row) (*User, error) {
 }
 
 // ---------------------------------------------------------------------------
-// actor Session
+// actor Session — realised as a self-contained JWT
+// ---------------------------------------------------------------------------
+//
+// The auth.candy spec models Session as a stateful actor with id+user+
+// issued+expires+revoked. The same spec's prose pins the realisation:
+// "Token is opaque to the spec but is realized as a JWT by codegen…
+// JWT semantics for production. No session-store lookup on the hot path;
+// the JWT is self-contained. Revocation goes through a small … JWT
+// claims."
+//
+// The Session actor's persistent state therefore splits:
+//
+//   user, issued, expires → encoded in the JWT claims (sub, iat, exp).
+//   revoked: bool         → realised by presence in the revoked_jtis table.
+//
+// `Session.Revoke()` writes the JTI to that table; `Session.Validate()`
+// parses the JWT and consults the revocation table.
+
+// SessionClaims is the JWT payload for an issued session.
+type SessionClaims struct {
+	UserID shared.Id `json:"-"`
+	jwt.RegisteredClaims
+}
+
+// JWTService signs and parses session JWTs.
+type JWTService struct {
+	secret []byte
+	issuer string
+	ttl    time.Duration
+}
+
+// NewJWTService constructs a JWTService. ttl is the session lifetime
+// (the spec says `expires: now after 7d`).
+func NewJWTService(secret []byte, issuer string, ttl time.Duration) *JWTService {
+	return &JWTService{secret: secret, issuer: issuer, ttl: ttl}
+}
+
+// Issue signs a fresh JWT for userID. Returns the encoded token plus the
+// issued claims (caller wants jti for the idempotency record).
+func (s *JWTService) Issue(userID shared.Id, jti string, now time.Time) (shared.Token, *SessionClaims, error) {
+	claims := &SessionClaims{
+		UserID: userID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    s.issuer,
+			Subject:   string(userID),
+			ID:        jti,
+			IssuedAt:  jwt.NewNumericDate(now.UTC()),
+			ExpiresAt: jwt.NewNumericDate(now.UTC().Add(s.ttl)),
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims.RegisteredClaims)
+	signed, err := tok.SignedString(s.secret)
+	if err != nil {
+		return "", nil, fmt.Errorf("sign jwt: %w", err)
+	}
+	return shared.Token(signed), claims, nil
+}
+
+// Parse verifies the signature, checks exp, and returns the claims.
+// Does NOT consult the revocation table — callers that need that check
+// must do it explicitly via RevokedRepo.
+func (s *JWTService) Parse(raw shared.Token, now time.Time) (*SessionClaims, error) {
+	parsed, err := jwt.ParseWithClaims(string(raw), &jwt.RegisteredClaims{}, func(t *jwt.Token) (any, error) {
+		if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, fmt.Errorf("unexpected alg: %s", t.Method.Alg())
+		}
+		return s.secret, nil
+	}, jwt.WithTimeFunc(func() time.Time { return now }))
+	if err != nil {
+		return nil, shared.ErrSessionInvalid{}
+	}
+	rc, ok := parsed.Claims.(*jwt.RegisteredClaims)
+	if !ok || !parsed.Valid {
+		return nil, shared.ErrSessionInvalid{}
+	}
+	if rc.Subject == "" || rc.ID == "" {
+		return nil, shared.ErrSessionInvalid{}
+	}
+	return &SessionClaims{
+		UserID:           shared.Id(rc.Subject),
+		RegisteredClaims: *rc,
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// RevokedRepo — the small revocation list backing JWT revocation
 // ---------------------------------------------------------------------------
 
-// Session is the persistent state of an auth session.
-type Session struct {
-	Token   shared.Token
-	UserID  shared.Id
-	Issued  time.Time
-	Expires time.Time
-	Revoked bool
-}
+// RevokedRepo persists revoked JWT IDs. Revocation is idempotent —
+// re-revoking the same JTI is a no-op via INSERT OR IGNORE.
+type RevokedRepo struct{ db *sql.DB }
 
-// invariant: expires > issued (enforced at creation time in Create).
+// NewRevokedRepo constructs a RevokedRepo.
+func NewRevokedRepo(db *sql.DB) *RevokedRepo { return &RevokedRepo{db: db} }
 
-// SessionRepo owns all reads and writes for the sessions table.
-type SessionRepo struct{ db *sql.DB }
-
-// NewSessionRepo constructs a SessionRepo.
-func NewSessionRepo(db *sql.DB) *SessionRepo { return &SessionRepo{db: db} }
-
-// Create inserts a new Session. Enforces expires > issued invariant.
-func (r *SessionRepo) Create(ctx context.Context, s Session) (*Session, error) {
-	if !s.Expires.After(s.Issued) {
-		return nil, fmt.Errorf("session invariant: expires must be after issued")
-	}
+// Revoke inserts the JTI into the revocation table. Idempotent.
+func (r *RevokedRepo) Revoke(ctx context.Context, jti string, userID shared.Id, at time.Time) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO sessions (token, user_id, issued, expires, revoked) VALUES (?, ?, ?, ?, ?)`,
-		string(s.Token), string(s.UserID),
-		s.Issued.UTC().Format(time.RFC3339Nano),
-		s.Expires.UTC().Format(time.RFC3339Nano),
-		boolToInt(s.Revoked),
+		`INSERT OR IGNORE INTO revoked_jtis (jti, user_id, revoked_at) VALUES (?, ?, ?)`,
+		jti, string(userID), at.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("session create: %w", err)
+		return fmt.Errorf("revoke jti: %w", err)
 	}
-	return &s, nil
+	return nil
 }
 
-// FindByToken returns the session with the given token, or ErrNotFound.
-func (r *SessionRepo) FindByToken(ctx context.Context, token shared.Token) (*Session, error) {
-	row := r.db.QueryRowContext(ctx,
-		`SELECT token, user_id, issued, expires, revoked FROM sessions WHERE token = ?`, string(token))
-	s, err := scanSession(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, shared.ErrNotFound{Entity: "session"}
-	}
-	return s, err
-}
-
-// Validate returns the user id if the session is live, else SessionInvalid.
-// Spec: require revoked == false; require now < expires.
-func (r *SessionRepo) Validate(ctx context.Context, token shared.Token, now time.Time) (shared.Id, error) {
-	s, err := r.FindByToken(ctx, token)
+// IsRevoked returns true if the JTI is in the revocation list.
+func (r *RevokedRepo) IsRevoked(ctx context.Context, jti string) (bool, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM revoked_jtis WHERE jti = ?`, jti).Scan(&count)
 	if err != nil {
-		return "", shared.ErrSessionInvalid{}
+		return false, fmt.Errorf("check revoked: %w", err)
 	}
-	if s.Revoked {
-		return "", shared.ErrSessionInvalid{}
-	}
-	if !now.Before(s.Expires) {
-		return "", shared.ErrSessionInvalid{}
-	}
-	return s.UserID, nil
-}
-
-// Revoke marks the session as revoked. Idempotent — re-revoking is a no-op.
-// Spec: "effect: revoked = true" — always succeeds, no precondition.
-func (r *SessionRepo) Revoke(ctx context.Context, token shared.Token, now time.Time) (*Session, error) {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE sessions SET revoked = 1 WHERE token = ?`, string(token))
-	if err != nil {
-		return nil, fmt.Errorf("session revoke: %w", err)
-	}
-	return r.FindByToken(ctx, token)
+	return count > 0, nil
 }
 
 // AuditRevoked appends a row to the session_revoked audit table.
 // Audit rows are never updated — append-only.
-func (r *SessionRepo) AuditRevoked(ctx context.Context, token shared.Token, userID shared.Id, at time.Time) error {
+func (r *RevokedRepo) AuditRevoked(ctx context.Context, jti string, userID shared.Id, at time.Time) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO audit_session_revoked (token, user_id, at) VALUES (?, ?, ?)`,
-		string(token), string(userID), at.UTC().Format(time.RFC3339Nano),
+		`INSERT INTO audit_session_revoked (jti, user_id, at) VALUES (?, ?, ?)`,
+		jti, string(userID), at.UTC().Format(time.RFC3339Nano),
 	)
 	return err
-}
-
-func scanSession(row *sql.Row) (*Session, error) {
-	var s Session
-	var tokenStr, userStr, issuedStr, expiresStr string
-	var revokedInt int
-	if err := row.Scan(&tokenStr, &userStr, &issuedStr, &expiresStr, &revokedInt); err != nil {
-		return nil, err
-	}
-	issued, err := time.Parse(time.RFC3339Nano, issuedStr)
-	if err != nil {
-		return nil, fmt.Errorf("parse issued: %w", err)
-	}
-	expires, err := time.Parse(time.RFC3339Nano, expiresStr)
-	if err != nil {
-		return nil, fmt.Errorf("parse expires: %w", err)
-	}
-	s.Token = shared.Token(tokenStr)
-	s.UserID = shared.Id(userStr)
-	s.Issued = issued.UTC()
-	s.Expires = expires.UTC()
-	s.Revoked = revokedInt != 0
-	return &s, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -228,25 +249,25 @@ type IdempotencyRepo struct{ db *sql.DB }
 // NewIdempotencyRepo constructs an IdempotencyRepo.
 func NewIdempotencyRepo(db *sql.DB) *IdempotencyRepo { return &IdempotencyRepo{db: db} }
 
-// FindSignup returns the cached result for the given key, or (nil, nil) if absent.
-func (r *IdempotencyRepo) FindSignup(ctx context.Context, key shared.Key) (userID shared.Id, token shared.Token, found bool, err error) {
+// FindSignup returns the cached user id for the given key, or (id, false, nil).
+func (r *IdempotencyRepo) FindSignup(ctx context.Context, key shared.Key) (userID shared.Id, found bool, err error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT user_id, token FROM signup_idempotency WHERE key = ?`, string(key))
-	var uid, tok string
-	if err = row.Scan(&uid, &tok); errors.Is(err, sql.ErrNoRows) {
-		return "", "", false, nil
+		`SELECT user_id FROM signup_idempotency WHERE key = ?`, string(key))
+	var uid string
+	if err = row.Scan(&uid); errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
 	if err != nil {
-		return "", "", false, err
+		return "", false, err
 	}
-	return shared.Id(uid), shared.Token(tok), true, nil
+	return shared.Id(uid), true, nil
 }
 
 // StoreSignup persists an idempotency result. Ignores conflicts (key already stored).
-func (r *IdempotencyRepo) StoreSignup(ctx context.Context, key shared.Key, userID shared.Id, token shared.Token) error {
+func (r *IdempotencyRepo) StoreSignup(ctx context.Context, key shared.Key, userID shared.Id) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO signup_idempotency (key, user_id, token) VALUES (?, ?, ?)`,
-		string(key), string(userID), string(token),
+		`INSERT OR IGNORE INTO signup_idempotency (key, user_id) VALUES (?, ?)`,
+		string(key), string(userID),
 	)
 	return err
 }

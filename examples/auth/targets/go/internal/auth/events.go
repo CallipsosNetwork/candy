@@ -29,9 +29,13 @@ type UserVerified struct {
 	At   time.Time
 }
 
-// SessionRevoked — delivery: eager; emitted by Session.Revoke.
-// NOTE: token is intentionally omitted from structured logs — bearer tokens never log.
+// SessionRevoked — delivery: eager; emitted by Logout.
+// Spec payload: { token: Token, user: Id, at: Timestamp }.
+// The Token field carries the JWT string. The "tokens never log" rule
+// applies to log lines (slog.Info / errors); the event payload is
+// internal data, not a log surface.
 type SessionRevoked struct {
-	User shared.Id
-	At   time.Time
+	Token shared.Token
+	User  shared.Id
+	At    time.Time
 }

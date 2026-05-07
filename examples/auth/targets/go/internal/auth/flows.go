@@ -10,20 +10,24 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/CallipsosNetwork/candy/examples/auth/targets/go/internal/runtime"
-	"github.com/CallipsosNetwork/candy/examples/auth/targets/go/internal/shared"
 	"github.com/segmentio/ksuid"
 	"golang.org/x/crypto/argon2"
+
+	"github.com/CallipsosNetwork/candy/examples/auth/targets/go/internal/runtime"
+	"github.com/CallipsosNetwork/candy/examples/auth/targets/go/internal/shared"
 )
+
+// SessionTTL is the JWT lifetime. Spec: `expires: now after 7d`.
+const SessionTTL = 7 * 24 * time.Hour
 
 // Deps carries all dependencies for auth flows and actors.
 // No globals — everything is passed explicitly.
 type Deps struct {
-	Users        *UserRepo
-	Sessions     *SessionRepo
-	Idempotency  *IdempotencyRepo
-	EventBus     *runtime.EventBus
-	JWTSecret    []byte
+	Users       *UserRepo
+	JWT         *JWTService
+	Revoked     *RevokedRepo
+	Idempotency *IdempotencyRepo
+	EventBus    *runtime.EventBus
 }
 
 // SignupResult is the success payload of the Signup flow.
@@ -45,16 +49,14 @@ type LoginResult struct {
 // Signup creates a new user, hashes the password, and issues an initial session.
 // Idempotent on key — replaying with the same key returns the same user_id and a fresh session.
 func Signup(ctx context.Context, deps Deps, email shared.Email, password shared.Password, now time.Time, key shared.Key) (SignupResult, error) {
-	// Idempotency check — replay returns the prior user_id with a fresh session token.
-	if uid, tok, found, err := deps.Idempotency.FindSignup(ctx, key); err != nil {
+	// Idempotency check — replay returns the prior user_id with a fresh JWT.
+	if uid, found, err := deps.Idempotency.FindSignup(ctx, key); err != nil {
 		return SignupResult{}, fmt.Errorf("idempotency lookup: %w", err)
 	} else if found {
-		// Issue a fresh session for the same user (spec: "fresh session").
-		newTok, err := issueSession(ctx, deps, uid, now)
+		newTok, _, err := deps.JWT.Issue(uid, ksuid.New().String(), now)
 		if err != nil {
 			return SignupResult{}, err
 		}
-		_ = tok // original token is superseded
 		return SignupResult{User: uid, Token: newTok}, nil
 	}
 
@@ -90,17 +92,18 @@ func Signup(ctx context.Context, deps Deps, email shared.Email, password shared.
 		return SignupResult{}, fmt.Errorf("create user: %w", err)
 	}
 
-	// step session = ask Session.create({ token: generate(), user: user.id, issued: now, expires: now after 7d })
-	token, err := issueSession(ctx, deps, user.ID, now)
+	// step session = ask Session.create({ user: user.id, issued: now, expires: now after 7d })
+	// Realised as JWT issuance.
+	token, _, err := deps.JWT.Issue(user.ID, ksuid.New().String(), now)
 	if err != nil {
 		return SignupResult{}, err
 	}
 
 	// Persist idempotency record for future replays.
-	if err := deps.Idempotency.StoreSignup(ctx, key, user.ID, token); err != nil {
-		// Non-fatal: idempotency store failure doesn't roll back the user.
-		// The response is still correct; a replay will create a second user if the
-		// store is inconsistent, but that is acceptable for v0.1 (no distributed tx).
+	if err := deps.Idempotency.StoreSignup(ctx, key, user.ID); err != nil {
+		// Non-fatal: idempotency store failure does not roll back the user.
+		// A subsequent replay will create a duplicate user; v0.1 has no
+		// distributed transaction. Acceptable for the conformance gate.
 		_ = err
 	}
 
@@ -129,8 +132,9 @@ func Login(ctx context.Context, deps Deps, email shared.Email, password shared.P
 		return LoginResult{}, shared.ErrInvalidCredentials{}
 	}
 
-	// step session = ask Session.create({ token: generate(), user: user.id, issued: now, expires: now after 7d })
-	token, err := issueSession(ctx, deps, user.ID, now)
+	// step session = ask Session.create({ user: user.id, issued: now, expires: now after 7d })
+	// Realised as JWT issuance.
+	token, _, err := deps.JWT.Issue(user.ID, ksuid.New().String(), now)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -146,20 +150,35 @@ func Login(ctx context.Context, deps Deps, email shared.Email, password shared.P
 // flow Logout
 // ---------------------------------------------------------------------------
 
-// Logout revokes the session associated with the given bearer token.
-// Idempotent — re-revoking is a no-op (spec: Session.Revoke is idempotent).
+// Logout revokes the JWT carried by the request. Idempotent — re-revoking
+// is a no-op (Session.Revoke is idempotent per spec).
+//
+// The middleware (LogoutBearerAuth) has already verified signature + exp,
+// so the JWT here is well-formed. Revocation writes the JTI to the
+// revocation list; subsequent BearerAuth lookups will see it as revoked.
 func Logout(ctx context.Context, deps Deps, token shared.Token, now time.Time) error {
-	// step _ = ask Session(token).Revoke()
-	session, err := deps.Sessions.Revoke(ctx, token, now)
+	claims, err := deps.JWT.Parse(token, now)
 	if err != nil {
-		return fmt.Errorf("revoke session: %w", err)
+		// LogoutBearerAuth already rejected unparseable tokens upstream.
+		return fmt.Errorf("parse token in logout flow: %w", err)
+	}
+
+	// step _ = ask Session(token).Revoke()
+	if err := deps.Revoked.Revoke(ctx, claims.ID, claims.UserID, now); err != nil {
+		return fmt.Errorf("revoke jti: %w", err)
 	}
 
 	// Append to audit (audit rows are never updated).
-	_ = deps.Sessions.AuditRevoked(ctx, token, session.UserID, now)
+	_ = deps.Revoked.AuditRevoked(ctx, claims.ID, claims.UserID, now)
 
-	// emit SessionRevoked — token is NOT logged (bearer tokens never log)
-	deps.EventBus.Publish(ctx, SessionRevoked{User: session.UserID, At: now})
+	// emit SessionRevoked { token, user, at } — token is the JWT string
+	// (per spec: payload includes Token). Event is internal; the
+	// "tokens never log" rule applies to log lines, not event payloads.
+	deps.EventBus.Publish(ctx, SessionRevoked{
+		Token: token,
+		User:  claims.UserID,
+		At:    now,
+	})
 
 	return nil
 }
@@ -167,21 +186,6 @@ func Logout(ctx context.Context, deps Deps, token shared.Token, now time.Time) e
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
-
-// issueSession creates a new session token (KSUID) and persists it.
-func issueSession(ctx context.Context, deps Deps, userID shared.Id, now time.Time) (shared.Token, error) {
-	tok := shared.Token(ksuid.New().String())
-	_, err := deps.Sessions.Create(ctx, Session{
-		Token:   tok,
-		UserID:  userID,
-		Issued:  now,
-		Expires: now.Add(7 * 24 * time.Hour),
-	})
-	if err != nil {
-		return "", fmt.Errorf("create session: %w", err)
-	}
-	return tok, nil
-}
 
 // hashPassword returns an argon2id hash of the plaintext password.
 // Parameters are intentionally conservative for dev; production should use
@@ -209,7 +213,6 @@ func verifyPassword(password, stored string) bool {
 }
 
 func splitHash(s string) []string {
-	// "argon2id$<salt>$<hash>" — split on $
 	var parts []string
 	cur := []byte{}
 	for _, c := range s {

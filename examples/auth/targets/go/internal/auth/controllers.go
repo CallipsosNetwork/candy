@@ -31,73 +31,88 @@ const (
 // ---------------------------------------------------------------------------
 // Policy attachment: prose scope — applies to every authenticated controller route.
 
-// BearerAuth validates a bearer token, sets principal id and raw token on context.
-// Returns 401 on absent or invalid bearer.
+// BearerAuth validates a session JWT and binds principal id + raw token on
+// context. Returns 401 on absent header, malformed token, expired token, or
+// revoked JTI.
 func BearerAuth(deps Deps) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// now bound at route boundary.
 			now := time.Now().UTC()
 
-			hdr := r.Header.Get("Authorization")
-			if hdr == "" {
+			token, ok := readBearer(r)
+			if !ok {
 				writeJSON(w, 401, map[string]string{"error": "missing_bearer"})
 				return
 			}
-			if !strings.HasPrefix(hdr, "Bearer ") {
-				writeJSON(w, 401, map[string]string{"error": "invalid_bearer"})
-				return
-			}
-			rawToken := strings.TrimPrefix(hdr, "Bearer ")
-			token := shared.Token(rawToken)
 
-			// Session.Validate: returns user id if live, else SessionInvalid.
-			userID, err := deps.Sessions.Validate(r.Context(), token, now)
+			claims, err := deps.JWT.Parse(token, now)
 			if err != nil {
 				writeJSON(w, 401, map[string]string{"error": "invalid_bearer"})
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), ctxKeyPrincipal, userID)
+			revoked, err := deps.Revoked.IsRevoked(r.Context(), claims.ID)
+			if err != nil {
+				slog.ErrorContext(r.Context(), "revocation lookup", "err", err)
+				writeJSON(w, 500, map[string]string{"error": "internal"})
+				return
+			}
+			if revoked {
+				writeJSON(w, 401, map[string]string{"error": "invalid_bearer"})
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), ctxKeyPrincipal, claims.UserID)
 			ctx = context.WithValue(ctx, ctxKeyToken, token)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-// LogoutBearerAuth is the middleware for POST /logout.
-// Unlike the general BearerAuth, it allows revoked sessions through — logout is
-// idempotent and the flow must be reachable even when the session is already
-// revoked. It rejects only when no bearer header is present or the token is not
-// a known session at all.
+// LogoutBearerAuth is the middleware for POST /logout. It validates the
+// JWT signature and exp but DOES NOT consult the revocation list — logout
+// is idempotent and the flow must be reachable when the JTI is already
+// revoked. An unsigned, malformed, or expired bearer is still rejected
+// with 401.
 func LogoutBearerAuth(deps Deps) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hdr := r.Header.Get("Authorization")
-			if hdr == "" {
+			now := time.Now().UTC()
+
+			token, ok := readBearer(r)
+			if !ok {
 				writeJSON(w, 401, map[string]string{"error": "missing_bearer"})
 				return
 			}
-			if !strings.HasPrefix(hdr, "Bearer ") {
-				writeJSON(w, 401, map[string]string{"error": "invalid_bearer"})
-				return
-			}
-			rawToken := strings.TrimPrefix(hdr, "Bearer ")
-			token := shared.Token(rawToken)
 
-			// Check that the session exists (even if revoked or expired).
-			// A completely unknown token (not in DB) is rejected with 401.
-			session, err := deps.Sessions.FindByToken(r.Context(), token)
+			claims, err := deps.JWT.Parse(token, now)
 			if err != nil {
 				writeJSON(w, 401, map[string]string{"error": "invalid_bearer"})
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), ctxKeyPrincipal, session.UserID)
+			ctx := context.WithValue(r.Context(), ctxKeyPrincipal, claims.UserID)
 			ctx = context.WithValue(ctx, ctxKeyToken, token)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// readBearer extracts the bearer token from the Authorization header.
+// Returns (token, true) on success, ("", false) on absent / malformed.
+func readBearer(r *http.Request) (shared.Token, bool) {
+	hdr := r.Header.Get("Authorization")
+	if hdr == "" {
+		return "", false
+	}
+	if !strings.HasPrefix(hdr, "Bearer ") {
+		return "", false
+	}
+	raw := strings.TrimPrefix(hdr, "Bearer ")
+	if raw == "" {
+		return "", false
+	}
+	return shared.Token(raw), true
 }
 
 // MountAuth registers all auth routes on r.
@@ -188,7 +203,7 @@ func handleLogin(deps Deps) http.HandlerFunc {
 
 		email, err := shared.NewEmail(body.Email)
 		if err != nil {
-			writeJSON(w, 400, map[string]string{"error": "bad_request"})
+			writeJSON(w, 401, map[string]string{"error": "invalid_credentials"})
 			return
 		}
 
@@ -220,7 +235,7 @@ func handleLogout(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		now := time.Now().UTC()
 
-		// bearer is set by BearerAuth middleware.
+		// bearer is set by LogoutBearerAuth.
 		token := tokenFromContext(r.Context())
 
 		if err := Logout(r.Context(), deps, token, now); err != nil {
