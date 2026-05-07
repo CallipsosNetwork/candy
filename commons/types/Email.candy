@@ -1,0 +1,40 @@
+// Email — RFC 5322 email address.
+//
+// Canonical commons spec. Every project that needs an email address
+// type pulls this in via `use spec Email`. Projects that need
+// different semantics (e.g. internal-domain-only) shadow with
+// `spec Email string refines { ... }` rather than re-declaring the
+// underlying validation.
+
+spec Email string {
+  intent: """
+    An RFC 5322 email address. Length capped at 320 characters per
+    the RFC's local-part (64) plus '@' plus domain (255) limits.
+    Comparison is case-insensitive on the local part — that matches
+    most providers' actual behaviour and avoids surprise on lookup.
+
+    Construction trims surrounding whitespace and rejects malformed
+    input. Storage retains the exact construction-time value;
+    case-insensitive comparison is implemented at the comparison
+    site, not at storage.
+  """
+
+  max:    320
+  format: rfc5322
+  trim:   on-construction
+  compare: case-insensitive
+
+  examples:
+    - given: "alice@example.com"
+      then:  ok
+    - given: "ALICE@Example.COM"
+      then:  ok                    // compares equal to alice@example.com
+    - given: "  bob@example.com  "
+      then:  ok                    // whitespace trimmed at construction
+    - given: "no-at-sign"
+      then:  err(BadEmail)
+    - given: ""
+      then:  err(BadEmail)
+    - given: "a@b"
+      then:  err(BadEmail)         // no TLD on the domain
+}

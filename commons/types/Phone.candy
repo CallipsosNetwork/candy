@@ -1,0 +1,42 @@
+// Phone — E.164 phone number.
+//
+// Used by the notifications feature for SMS routing. E.164 is the
+// only format candy projects accept; locale-specific shapes
+// ("(415) 555-1234") are normalised to E.164 at construction or
+// rejected.
+
+spec Phone string {
+  intent: """
+    An E.164 phone number. The format is a leading '+', a country
+    code (1–3 digits), and a national subscriber number, with no
+    separators — total length 16 or fewer characters.
+
+    Locale-specific shapes (parentheses, hyphens, spaces, leading
+    zeros for trunk codes) are normalised to E.164 at construction
+    or rejected. Projects that need to display a locale-specific
+    rendering format from the stored E.164 at render time, not in
+    the type itself.
+
+    Comparison is exact-byte (no normalisation needed at compare
+    time, since construction normalised). Storage is the
+    normalised form.
+  """
+
+  max:    16
+  format: e164
+  trim:   on-construction
+
+  examples:
+    - given: "+14155550123"
+      then:  ok
+    - given: "+442071838750"
+      then:  ok                   // UK landline
+    - given: "(415) 555-0123"
+      then:  ok                   // normalised at construction to +14155550123
+    - given: "415-555-0123"
+      then:  err(BadPhone)        // missing country code; cannot infer
+    - given: "+1 415 555 0123"
+      then:  ok                   // whitespace stripped, normalised
+    - given: ""
+      then:  err(BadPhone)
+}

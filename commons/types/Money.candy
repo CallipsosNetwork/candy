@@ -1,0 +1,47 @@
+// Money — integer minor units of a pinned currency.
+//
+// Canonical commons spec. Currency is the one parameter projects
+// must pin: `use spec Money(currency: USD)`. Everything else
+// (integer-only, no floats, nearest-half-up rounding) is fixed
+// across all consumers.
+//
+// Per the candy hard rule "no floats for money", consumers must
+// reject float input at construction even when the runtime allows
+// implicit numeric coercion.
+
+spec Money int {
+  intent: """
+    A monetary amount stored as integer minor units of a pinned
+    currency. Currency is fixed at the point of declaration; mixing
+    currencies in arithmetic is a type error, not a runtime one.
+
+    Floats are forbidden at every boundary — input parsing, SDK
+    serialisation, intermediate computation, output rendering. Money
+    arithmetic is exact. Rounding, when required (interest, taxes,
+    proration), follows the round-half-to-nearest convention pinned
+    on the spec.
+
+    The `unit: minor` field means the wire value is in the
+    currency's smallest indivisible unit: cents for USD, pence for
+    GBP, satoshi for BTC. The display layer multiplies by the
+    currency's exponent at render time.
+  """
+
+  unit:     minor
+  currency: parameter            // pinned by `use spec Money(currency: ...)`
+  round:    nearest
+
+  examples:
+    - given: 1500   when: { currency: USD }
+      then:  ok                   // displays as $15.00
+    - given: 0      when: { currency: USD }
+      then:  ok                   // zero is a valid amount
+    - given: -250   when: { currency: USD }
+      then:  ok                   // negatives are valid (refunds, debits)
+    - given: 1500.5
+      then:  err(NotInteger)      // floats forbidden
+    - given: "fifteen"
+      then:  err(NotInteger)
+    - "addition is exact: 1234 + 5678 == 6912 (no rounding step)"
+    - "cross-currency arithmetic is a type error, not a runtime check"
+}

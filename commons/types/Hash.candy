@@ -1,0 +1,43 @@
+// Hash — one-way hash of a sensitive value.
+//
+// Used wherever the spec writes `hash: PasswordHash` or stores a
+// hashed token / API key. The hash function itself is target-resolved
+// — preferences.candy supplies the concrete library per language
+// (`when need hash use argon2`).
+//
+// Plaintext is never persisted alongside a Hash. Verification uses
+// constant-time comparison.
+
+spec Hash opaque {
+  intent: """
+    A one-way hash of a sensitive value: passwords, secrets, API
+    keys, anything where the plaintext must not be recoverable from
+    storage.
+
+    The hash function is resolved per target via the `when need hash
+    use ...` line in preferences.candy. Argon2id is the recommended
+    default; the spec does not pin it because the choice is a
+    deployment-time decision (FIPS compliance, performance budget,
+    migration cohort).
+
+    Hashed values cross storage boundaries; plaintext does not.
+    Verification is constant-time — `verify(plaintext, hash)` returns
+    true iff `hash(plaintext)` equals the stored hash, with
+    timing-safe comparison.
+
+    A new salt is generated per hash invocation; equal plaintexts
+    produce different stored hashes. Migration to a stronger hash
+    function is a re-hash on next successful authentication, not a
+    background job.
+  """
+
+  verify:    constant-time
+  reversal:  forbidden            // plaintext is not derivable
+
+  examples:
+    - given: "correct horse battery staple 9"
+      then:  ok                   // returns an opaque hash
+    - "verify(plaintext, hash) is true iff plaintext hashes to hash"
+    - "verify uses constant-time comparison (no early return on mismatch)"
+    - "two hash() calls on the same plaintext return different bytes (per-call salt)"
+}
