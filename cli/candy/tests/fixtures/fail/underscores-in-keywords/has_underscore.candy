@@ -1,0 +1,11 @@
+// Negative fixture for underscores-in-keywords:
+// block name contains an underscore.
+
+prose {
+  intent: "Test fixture for underscores-in-keywords rule."
+}
+
+flow my_flow(name: string) -> string {
+  intent: "Has underscore in name."
+  commit name
+}

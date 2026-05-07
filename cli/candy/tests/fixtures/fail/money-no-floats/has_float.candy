@@ -1,0 +1,8 @@
+// Negative fixture for money-no-floats:
+// type uses float primitive.
+
+prose {
+  intent: "Test fixture for money-no-floats rule."
+}
+
+type BadMoney float { unit: minor }

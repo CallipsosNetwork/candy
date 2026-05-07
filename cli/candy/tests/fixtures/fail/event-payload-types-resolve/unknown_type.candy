@@ -1,0 +1,11 @@
+// Negative fixture for event-payload-types-resolve:
+// event payload references an undeclared type.
+
+prose {
+  intent: "Test fixture for event-payload-types-resolve rule."
+}
+
+event ThingHappened {
+  payload: { id: Id, value: UnknownType }
+  delivery: eager
+}

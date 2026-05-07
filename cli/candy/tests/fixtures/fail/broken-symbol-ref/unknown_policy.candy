@@ -1,0 +1,7 @@
+// Negative fixture for broken-symbol-ref:
+// policies list references a policy not declared anywhere.
+
+prose {
+  intent: "Test fixture for broken-symbol-ref rule."
+  policies: [UndeclaredPolicy]
+}

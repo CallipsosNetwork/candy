@@ -1,0 +1,10 @@
+// Negative fixture for broken-cross-feature-ref:
+// uses: feature X for Op where Op is not exported by X.
+// This is part of a multi-file project scenario; tested via project mode.
+
+prose {
+  intent: "References a non-existent export from feature auth."
+
+  uses:
+    feature auth for NonExistentOp
+}

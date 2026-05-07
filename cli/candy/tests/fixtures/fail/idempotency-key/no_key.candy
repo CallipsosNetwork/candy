@@ -1,0 +1,18 @@
+// Negative fixture for idempotency-key:
+// flow calls an external actor but has no key parameter.
+
+prose {
+  intent: "Test fixture for idempotency-key rule."
+}
+
+external actor Email {
+  intent: "Send emails."
+  accepts Send(to: string, subject: string)
+    -> Result<unit, DeliveryFailed>
+}
+
+flow NotifyUser(user_id: string, message: string, now: Timestamp) -> unit {
+  intent: "Sends a notification email. Missing key: Key parameter."
+  step result = ask Email.Send(user_id, message)
+  commit
+}

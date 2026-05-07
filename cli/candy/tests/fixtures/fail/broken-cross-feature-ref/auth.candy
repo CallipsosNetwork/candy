@@ -1,0 +1,16 @@
+// companion file providing feature "auth"
+prose {
+  intent: "Auth feature."
+  exports:
+    flow Login, Logout
+}
+
+flow Login(email: string, password: string) -> string {
+  intent: "Login."
+  commit "token"
+}
+
+flow Logout(token: string) -> unit {
+  intent: "Logout."
+  commit
+}

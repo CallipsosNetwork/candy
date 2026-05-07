@@ -1,0 +1,12 @@
+// Negative fixture for prose-required-intent:
+// prose block has no intent field.
+
+prose {
+  exports:
+    flow Hello
+}
+
+flow Hello(name: string) -> string {
+  intent: "Greet someone."
+  commit "Hello, ${name}!"
+}
