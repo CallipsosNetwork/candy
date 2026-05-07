@@ -865,15 +865,18 @@ impl<'s> Parser<'s> {
 
     /// Read a type header: optional primitive word then optional `{...}` body.
     fn read_type_header(&mut self) -> String {
-        self.skip_whitespace();
+        // Consume only horizontal whitespace before the header — a newline
+        // terminates a bodyless `type X primitive` declaration. Using the
+        // newline-eating `skip_whitespace` here would silently absorb the
+        // next type declaration into this one's header.
+        self.skip_whitespace_no_newline();
         let mut result = String::new();
         // read until `{` or end of line if no `{`
         loop {
-            self.skip_whitespace();
+            self.skip_whitespace_no_newline();
             match self.peek() {
                 None => break,
                 Some('{') => {
-                    // read block body
                     let (body, _) = self.read_block_body();
                     result.push_str(" { ");
                     result.push_str(&body);
