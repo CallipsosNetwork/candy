@@ -148,8 +148,10 @@ func handleLogin(deps FullDeps) http.HandlerFunc {
 
 func handleLogout(deps FullDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token := shared.Token(extractBearer(r))
-		_ = auth.Logout(r.Context(), deps.Auth, token)
+		now := time.Now().UTC()
+		// BearerAuth set the raw token on context.
+		token, _ := auth.TokenFromCtx(r.Context())
+		_ = auth.Logout(r.Context(), deps.Auth, token, now)
 		w.WriteHeader(204)
 	}
 }

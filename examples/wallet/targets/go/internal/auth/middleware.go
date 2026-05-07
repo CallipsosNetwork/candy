@@ -19,6 +19,7 @@ type contextKey int
 const (
 	ctxUserID contextKey = iota
 	ctxRole
+	ctxToken
 )
 
 // UserIDFromCtx extracts the authenticated user id from the request context.
@@ -33,20 +34,56 @@ func RoleFromCtx(ctx context.Context) (shared.Role, bool) {
 	return v, ok
 }
 
-// BearerAuth middleware: validates the Bearer token, sets user id + role on context.
-// Rejects with 401 on missing/invalid/expired/revoked token.
+// TokenFromCtx extracts the raw bearer token from the request context.
+// Used by the logout handler to know which JTI to revoke.
+func TokenFromCtx(ctx context.Context) (shared.Token, bool) {
+	v, ok := ctx.Value(ctxToken).(shared.Token)
+	return v, ok
+}
+
+// BearerAuth — parses + verifies signature + checks exp + checks revocation.
+// Default for every authenticated route. Sets user id, role, raw token on
+// context.
 func BearerAuth(deps Deps) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			now := time.Now().UTC()
-			token := extractBearer(r)
-			userID, role, err := ValidateBearerToken(r.Context(), deps, shared.Token(token), now)
+			token := shared.Token(extractBearer(r))
+			userID, role, err := ValidateBearerToken(r.Context(), deps, token, now)
 			if err != nil {
 				respondJSON(w, 401, map[string]string{"error": "unauthenticated"})
 				return
 			}
 			ctx := context.WithValue(r.Context(), ctxUserID, userID)
 			ctx = context.WithValue(ctx, ctxRole, role)
+			ctx = context.WithValue(ctx, ctxToken, token)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// LogoutBearerAuth — parses + verifies signature + checks exp; intentionally
+// SKIPS revocation. Logout is idempotent: re-sending a revoked JWT must
+// reach the Logout flow (which is itself idempotent), not be 401-ed by the
+// middleware. Malformed / unsigned / expired tokens are still rejected.
+func LogoutBearerAuth(deps Deps) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			now := time.Now().UTC()
+			raw := extractBearer(r)
+			if raw == "" {
+				respondJSON(w, 401, map[string]string{"error": "unauthenticated"})
+				return
+			}
+			token := shared.Token(raw)
+			claims, err := deps.JWT.Parse(token, now)
+			if err != nil {
+				respondJSON(w, 401, map[string]string{"error": "unauthenticated"})
+				return
+			}
+			ctx := context.WithValue(r.Context(), ctxUserID, shared.Id(claims.Subject))
+			ctx = context.WithValue(ctx, ctxRole, claims.Role)
+			ctx = context.WithValue(ctx, ctxToken, token)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

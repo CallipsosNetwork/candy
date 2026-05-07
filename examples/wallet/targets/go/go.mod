@@ -9,6 +9,7 @@ go 1.22
 require (
 	github.com/go-chi/chi/v5 v5.0.12
 	github.com/go-co-op/gocron/v2 v2.5.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/segmentio/ksuid v1.0.4
 	golang.org/x/crypto v0.23.0

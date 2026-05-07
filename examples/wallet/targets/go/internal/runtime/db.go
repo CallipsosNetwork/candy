@@ -38,13 +38,12 @@ CREATE TABLE IF NOT EXISTS users (
     created TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
-    token   TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    role    TEXT NOT NULL,
-    issued  TEXT NOT NULL,
-    expires TEXT NOT NULL,
-    revoked INTEGER NOT NULL DEFAULT 0
+-- JWT revocation list. Membership = revoked. INSERT OR IGNORE makes
+-- Logout idempotent.
+CREATE TABLE IF NOT EXISTS revoked_jtis (
+    jti        TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    revoked_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS wallets (

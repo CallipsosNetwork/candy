@@ -22,31 +22,39 @@ var commonPasswords = map[string]bool{
 //   - contains at least one letter and one digit
 //   - not in blocklist
 //
-// policy examples:
-//   - given "correct horse battery staple 9" → ok
-//   - given "short1"                         → err(TooShort)
-//   - given "alllowercase"                   → err(MissingDigit)
-//   - given "password123"                    → err(InBlocklist)
+// Spec examples:
+//
+//	"correct horse battery staple 9" → ok
+//	"short1"                         → err(TooShort)
+//	"alllowercase"                   → err(MissingDigit)
+//	"password123"                    → err(InBlocklist)
+//
+// Blocklist is checked first: the spec example "password123" is 11 chars
+// (below the length floor); checking length first would mask the
+// InBlocklist reason. Same ordering used by the auth Go target (PR #45).
 func PasswordStrength(p shared.Password) error {
 	s := string(p)
-	if len(s) < 12 {
-		return &shared.WeakPasswordErr{Reason: "too_short"}
-	}
-	hasDigit := false
-	hasLetter := false
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			hasDigit = true
-		}
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-			hasLetter = true
-		}
-	}
-	if !hasDigit || !hasLetter {
-		return &shared.WeakPasswordErr{Reason: "missing_digit"}
-	}
+
 	if commonPasswords[strings.ToLower(s)] {
 		return &shared.WeakPasswordErr{Reason: "in_blocklist"}
 	}
+
+	if len(s) < 12 {
+		return &shared.WeakPasswordErr{Reason: "too_short"}
+	}
+
+	hasDigit, hasLetter := false, false
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+			hasLetter = true
+		}
+	}
+	if !hasLetter || !hasDigit {
+		return &shared.WeakPasswordErr{Reason: "missing_digit"}
+	}
+
 	return nil
 }

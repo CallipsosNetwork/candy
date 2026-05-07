@@ -26,6 +26,7 @@ import (
 func main() {
 	port := envOr("PORT", "8080")
 	dbPath := envOr("DB_PATH", "/tmp/wallet.db")
+	jwtSecret := []byte(envOr("JWT_SECRET", "dev-secret-change-in-production"))
 
 	db, err := runtime.Open(dbPath)
 	if err != nil {
@@ -35,8 +36,9 @@ func main() {
 
 	// Build dependency graph.
 	userRepo := auth.NewUserRepo(db)
-	sessionRepo := auth.NewSessionRepo(db)
-	authDeps := auth.Deps{Users: userRepo, Sessions: sessionRepo}
+	jwtSvc := auth.NewJWTService(jwtSecret, "candy-wallet", auth.SessionTTL)
+	revokedRepo := auth.NewRevokedRepo(db)
+	authDeps := auth.Deps{Users: userRepo, JWT: jwtSvc, Revoked: revokedRepo}
 	walletRepo := wallet.NewWalletRepo(db)
 	scheduleRepo := wallet.NewScheduledTransferRepo(db)
 	walletDeps := wallet.Deps{Wallets: walletRepo, Schedules: scheduleRepo}

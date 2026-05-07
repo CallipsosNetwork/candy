@@ -6,18 +6,23 @@ package auth
 
 import (
 	"context"
-	"time"
-
-	"github.com/CallipsosNetwork/candy/examples/wallet/targets/go/internal/shared"
-	"golang.org/x/crypto/argon2"
 	"crypto/rand"
 	"encoding/hex"
+	"time"
+
+	"golang.org/x/crypto/argon2"
+
+	"github.com/CallipsosNetwork/candy/examples/wallet/targets/go/internal/shared"
 )
 
-// Deps bundles auth repositories needed by flows.
+// SessionTTL is the JWT lifetime (spec: `expires: now after 7d`).
+const SessionTTL = 7 * 24 * time.Hour
+
+// Deps bundles auth dependencies needed by flows + middleware.
 type Deps struct {
-	Users    *UserRepo
-	Sessions *SessionRepo
+	Users   *UserRepo
+	JWT     *JWTService
+	Revoked *RevokedRepo
 }
 
 // hashPassword produces an argon2id hash of the plaintext password.
@@ -69,10 +74,11 @@ type SignupArgs struct {
 // SignupResult is returned on successful signup.
 type SignupResult struct {
 	UserID shared.Id
+	Role   shared.Role
 	Token  shared.Token
 }
 
-// Signup creates a User account and issues a session. Idempotent on key.
+// Signup creates a User account and issues a JWT session.
 func Signup(ctx context.Context, deps Deps, a SignupArgs) (SignupResult, error) {
 	// step strength = PasswordStrength(password) rescue reject WeakPassword
 	if err := PasswordStrength(a.Password); err != nil {
@@ -104,24 +110,13 @@ func Signup(ctx context.Context, deps Deps, a SignupArgs) (SignupResult, error) 
 		return SignupResult{}, err
 	}
 
-	// Also create a wallet for this user.
-	// Wallet creation is handled in the wallet package, but we need the wallet to
-	// exist. This is wired at startup via the wallet.Deps passed to the full server.
-	// For auth-only flows, wallet creation is done post-signup in the controller.
-
-	// step session = ask Session.create(...)
-	session, err := deps.Sessions.Create(ctx, CreateSessionArgs{
-		Token:   GenerateToken(),
-		UserID:  user.ID,
-		Role:    shared.RoleUser,
-		Issued:  a.Now,
-		Expires: a.Now.Add(7 * 24 * time.Hour),
-	})
+	// step session = ask Session.create(...)  — realised as JWT issuance
+	token, _, err := deps.JWT.Issue(user.ID, user.Role, GenerateJTI(), a.Now)
 	if err != nil {
 		return SignupResult{}, err
 	}
 
-	return SignupResult{UserID: user.ID, Token: session.Token}, nil
+	return SignupResult{UserID: user.ID, Role: user.Role, Token: token}, nil
 }
 
 // LoginArgs matches the spec's Login flow parameters.
@@ -138,7 +133,7 @@ type LoginResult struct {
 	Token  shared.Token
 }
 
-// Login authenticates by email + password and issues a session.
+// Login authenticates by email + password and issues a JWT session.
 func Login(ctx context.Context, deps Deps, a LoginArgs) (LoginResult, error) {
 	// step user = ask User.findBy(email) rescue reject InvalidCredentials
 	user, err := deps.Users.FindByEmail(ctx, a.Email)
@@ -151,44 +146,44 @@ func Login(ctx context.Context, deps Deps, a LoginArgs) (LoginResult, error) {
 		return LoginResult{}, shared.ErrInvalidCredentials
 	}
 
-	// step session = ask Session.create(...)
-	session, err := deps.Sessions.Create(ctx, CreateSessionArgs{
-		Token:   GenerateToken(),
-		UserID:  user.ID,
-		Role:    user.Role,
-		Issued:  a.Now,
-		Expires: a.Now.Add(7 * 24 * time.Hour),
-	})
+	// step session = ask Session.create(...) — realised as JWT issuance
+	token, _, err := deps.JWT.Issue(user.ID, user.Role, GenerateJTI(), a.Now)
 	if err != nil {
 		return LoginResult{}, err
 	}
 
-	return LoginResult{UserID: user.ID, Role: user.Role, Token: session.Token}, nil
+	return LoginResult{UserID: user.ID, Role: user.Role, Token: token}, nil
 }
 
-// Logout revokes the session for the given token. Idempotent.
-func Logout(ctx context.Context, deps Deps, token shared.Token) error {
-	// step _ = ask Session(token).Revoke()
-	// Revoke is idempotent — UPDATE sets revoked=1 regardless of prior state.
-	return deps.Sessions.Revoke(ctx, token)
+// Logout revokes the JWT carried by the request. Idempotent.
+//
+// The middleware (LogoutBearerAuth) has already verified signature + exp,
+// so the token is well-formed. We re-parse here to extract the JTI;
+// re-parsing is cheap and keeps Logout self-contained.
+func Logout(ctx context.Context, deps Deps, token shared.Token, now time.Time) error {
+	claims, err := deps.JWT.Parse(token, now)
+	if err != nil {
+		return shared.ErrSessionInvalid
+	}
+	return deps.Revoked.Revoke(ctx, claims.ID, shared.Id(claims.Subject), now)
 }
 
 // ValidateBearerToken validates a token and returns the user id + role.
-// Returns ErrSessionInvalid if the token is missing, expired, or revoked.
-// Returns ErrUnauthenticated if the token is empty.
+// Returns ErrSessionInvalid on missing / malformed / expired / revoked.
 func ValidateBearerToken(ctx context.Context, deps Deps, token shared.Token, now time.Time) (shared.Id, shared.Role, error) {
 	if token == "" {
 		return "", "", shared.ErrUnauthenticated
 	}
-	session, err := deps.Sessions.FindByToken(ctx, token)
+	claims, err := deps.JWT.Parse(token, now)
 	if err != nil {
 		return "", "", shared.ErrSessionInvalid
 	}
-	if session.Revoked {
+	revoked, err := deps.Revoked.IsRevoked(ctx, claims.ID)
+	if err != nil {
+		return "", "", err
+	}
+	if revoked {
 		return "", "", shared.ErrSessionInvalid
 	}
-	if now.After(session.Expires) {
-		return "", "", shared.ErrSessionInvalid
-	}
-	return session.UserID, session.Role, nil
+	return shared.Id(claims.Subject), claims.Role, nil
 }
