@@ -6,6 +6,20 @@
 
 ---
 
+## ⚡ Where to start (read this box first)
+
+**Phase 0 is DONE.** All 6 codegen-architecture decisions on #36 are locked and #36 is closed. See section 7 "Decisions → Locked".
+
+**Two active phases, both unblocked, can run in parallel:**
+- **Phase A** — codegen prompts (#12). Author `prompts/codegen-base.md` + 4 thin overlays.
+- **Phase B** — Rust CLI scaffold + `candy lint` subcommand + `@tensorkit/candy` npm wrapper (#39).
+
+**Recommended first action**: spawn a sonnet sub-agent for phase B (Rust is its sweet spot — clap + chumsky + JSON output) while you (orchestrator) author phase A's codegen prompt. Two parallel PRs unblock phase C the fastest.
+
+---
+
+---
+
 ## 1. Mission
 
 Reach **candy alpha**: a candy spec language with a linter and a codegen prompt that, applied to one of the canonical examples, produces a backend in at least one target language that passes its hurl conformance evals. Validate with three small examples first (auth → todo → wallet) before scaling to the harder ones (billing, notifications, airbnb).
@@ -16,10 +30,10 @@ A stretch goal: a skill that bootstraps candy on an existing project. **Deferred
 
 ---
 
-## 2. Current state (2026-05-07)
+## 2. Current state (2026-05-07, post-handoff update)
 
 ### Repository
-- Branch: `main` is at `0233ef8` (after merging #34 eval framework and #35 retro)
+- Branch: `main` is at `108dde8` (after merging #34 eval framework, #35 retro, #37 original handoff)
 - 7 example projects shipped (`hello`, `auth`, `todo`, `wallet`, `airbnb`, `billing`, `notifications`)
 - Eval framework: 18 files (README, COVERAGE, 6 fixtures.env, 9 .md+.hurl pairs)
 - Editor extensions: Neovim (verified live), VS Code (shipped), tree-sitter skeleton
@@ -27,21 +41,21 @@ A stretch goal: a skill that bootstraps candy on an existing project. **Deferred
 - M1 retrospective in `.retrospective/phase-M1-foundation.md`
 
 ### Open PRs
-None (you may be opening this very PR with the handoff).
+None (this handoff update may be the next one).
 
 ### Open issues — priority order
-1. **#36 [gen] Discuss codegen wave architecture before execution** — 6 decisions to make. Recommendations are in section 7 below; lock them or argue if you disagree.
-2. **#12 [gen] Author candy/codegen system prompt** — blocked on #36
+1. **#12 [gen] Author candy/codegen system prompt** — UNBLOCKED. Phase A.
+2. **#39 [cli] Build candy Rust CLI scaffold + `candy lint` subcommand + npm wrapper** — UNBLOCKED. Phase B.
 3. **#13 [gen] Generate Go (chi) backend** — blocked on #12
 4. **#14 [gen] Generate Rust (axum) backend** — blocked on #12
 5. **#15 [gen] Generate TypeScript (hono) backend** — blocked on #12
 6. **#16 [gen] Generate Python (fastapi) backend** — blocked on #12
-7. **#17 [tests] Run auth.hurl against each target** — blocked on at least one of #13–#16
+7. **#17 [tests] Run auth.hurl against each target** — blocked on at least one of #13–#16. Becomes `candy test` subcommand of the Rust CLI in v0.2.
 8. **#23 [pi,future]** — labeled `future`, depends on #12
+9. **#38 [gen,future] [strategy] candy bootstrapper for existing projects** — labeled `future`, build-after-alpha (strategy doc only)
 
-You will likely also file:
-- **NEW** Linter v0.1 implementation (per #36 decision)
-- **NEW** Strategy doc for candy-on-existing-project skill (deferred build)
+### Closed during this session — for reference
+- **#36** — design discussion closed with 6 locked decisions. The decisions are in section 7. Phase 0 is done.
 
 ---
 
@@ -91,19 +105,33 @@ The user explicitly asked for "any edges in our candy spec that regresses." When
 
 ## 5. Phase plan
 
-| Phase | Scope | Issue closes | Branch suffix |
-|---|---|---|---|
-| **0** | Decide #36 (or accept the recommendations below) | #36 | (no PR — comment + close) |
-| **A** | Candy linter v0.1 (`@tensorkit/candy-lint`, TypeScript, npx-runnable) | NEW issue | `feat/linter-v01` |
-| **B** | Codegen prompts (base + 4 thin overlays) | #12 | `feat/codegen-prompts` |
-| **C** | POC: auth → Go/chi → eval green | #13 (auth) | `feat/codegen-auth-go` |
-| **D** | Auth on Rust / TS / Python | #14, #15, #16 (auth) | per-target branches |
-| **E** | Validate small examples: todo + wallet across targets, fix spec/grammar regressions as found | partial #13–#16 | `feat/validate-todo-wallet` |
-| **F** | Harder examples (parallel sonnet sub-agents): billing, notifications, airbnb | full #13–#16 | `feat/codegen-harder-examples` |
-| **G** | Conformance harness (CI workflow + per-target startup) | #17 | `feat/conformance-harness` |
-| **H** | Final retrospective: "what we'd do differently" — uncloses the deferred section in M1 retro | (file via retro skill) | `chore/retro-alpha` |
+| Phase | Scope | Issue closes | Branch suffix | Status |
+|---|---|---|---|---|
+| **0** | Decide #36 — 6 codegen-architecture questions | #36 | n/a | **DONE** (#36 closed 2026-05-07) |
+| **A** | Codegen prompts (option (c) — base + 4 thin overlays + dispatch to language skills) | #12 | `feat/codegen-prompts` | unblocked |
+| **B** | Rust CLI scaffold + `candy lint` subcommand + `@tensorkit/candy` npm wrapper | #39 | `feat/candy-cli-lint` | unblocked |
+| **C** | POC: auth → Go/chi → eval green | #13 (auth) | `feat/codegen-auth-go` | blocked on A |
+| **D** | Auth on Rust / TS / Python | #14, #15, #16 (auth) | per-target branches | blocked on C |
+| **E** | Validate small examples: todo + wallet across targets, fix spec/grammar regressions as found | partial #13–#16 | `feat/validate-todo-wallet` | blocked on D |
+| **F** | Harder examples (parallel sonnet sub-agents): billing, notifications, airbnb | full #13–#16 | `feat/codegen-harder-examples` | blocked on E |
+| **G** | Conformance harness — `candy test` subcommand of Rust CLI; CI workflow shells out to it | #17 | `feat/candy-test-harness` | blocked on at least one of D |
+| **H** | Final retrospective: "what we'd do differently" — uncloses the deferred section in M1 retro | (file via retro skill) | `chore/retro-alpha` | blocked on F |
 
-A and B are independent — could go in parallel (separate PRs). C depends on B. E depends on D. F can be parallelized across examples once E proves the pattern.
+A and B are independent — run in parallel (separate PRs). C depends on A. E depends on D. F can be parallelized across examples once E proves the pattern. G is a Rust CLI subcommand, not a separate harness.
+
+### Phase B — expanded scope (the "linter" is now a CLI scaffold + subcommand)
+
+The original phase B was "TypeScript linter." After locking Rust as the CLI language (Q3 of #36), phase B's scope expanded:
+
+1. **Rust workspace** at `cli/` with `candy/` crate.
+2. **CLI dispatch** via clap derive API.
+3. **`candy lint <file-or-dir>`** subcommand implementing 10 rules with JSON output.
+4. **Parser**: recommend `chumsky` (good error reporting) over hand-written or `pest`. The existing `extensions/tree-sitter-candy/` is a syntax-highlighting grammar — not parse-tree-quality.
+5. **Test fixtures**: every shipped `examples/*/` spec lints clean. Per-rule negative fixtures at `cli/candy/tests/fixtures/`.
+6. **npm wrapper** `@tensorkit/candy` with postinstall fetch (esbuild/swc pattern).
+7. **CI builds** for linux-x86_64, linux-aarch64, macos-x86_64, macos-aarch64, windows-x86_64.
+
+Issue #39 has the full spec.
 
 ---
 
@@ -159,22 +187,17 @@ A and B are independent — could go in parallel (separate PRs). C depends on B.
 | Canonical email provider: Postmark | examples/notifications/preferences.candy | User has access |
 | Eval format: hybrid `<feature>.md` + `<feature>.hurl` | evals/README.md | Narrative + executable, both stay aligned |
 | npm namespace: `@tensorkit` | memory: `npm_namespace.md` | Project-owned namespace |
-| Codegen prompt: option (c) — base + thin skill-dispatched overlays | (recommended below; not yet locked) | Less drift, leverages existing skills |
+| **Codegen prompt structure**: option (c) — base + thin overlays + dispatch to existing language-best-practices skills | (#36 closed 2026-05-07) | Less drift, leverages existing skills, ~1000 lines vs ~2000 |
+| **Linter rules**: 10-rule v0.1 set as listed in #36 | (#36 closed) | Add more as edges surface during codegen |
+| **Linter language**: Rust | (#36 closed) | Single static binary; embeds into the candy CLI as the first subcommand |
+| **CLI architecture**: Rust binary is source of truth; `@tensorkit/candy` npm package is a postinstall-fetch wrapper (esbuild/swc pattern); Claude Code skill is also a wrapper | (#36 closed; memory updated) | One source of truth, three distribution channels |
+| **Phase A and B sequencing**: parallel | (#36 closed) | Independent scope, halves elapsed time before C |
+| **Conformance harness**: becomes `candy test` subcommand in v0.2; CI workflow shells out to it | (#36 closed) | Unifies harness with CLI; CI provides the concrete trigger |
 
-### Open (per issue #36) — recommended answers
+### Open — surface to user before deciding
 
-If you have no strong reason to deviate, take these and close #36.
-
-1. **Prompt structure**: **(c)** base + thin overlays + dispatch to existing language skills. ~1000 lines total instead of ~2000.
-2. **Linter rule set**: **ship as listed** in #36 (10 rules). Add rules later as edges surface during codegen.
-3. **Linter language**: **TypeScript** (Node, npx-distributable). Rust is faster but heavier; TS is appropriate for v0.1 because npx is the user-facing surface.
-4. **Orchestrator**: **skill first, CLI later**. The skill ships with the prompts; a `candy gen` CLI command is post-alpha.
-5. **Sequencing**: **A and B in parallel** (separate PRs). They're independent; doing them in parallel halves the elapsed time before C unblocks.
-6. **Conformance harness**: **CI workflow first, harness moves into candy CLI v0.2**. CI is concrete and unblocks #17; CLI is downstream.
-
-### Open (no recommendation, surface to user before deciding)
-
-- **First-admin bootstrap** in role-gated examples — currently a runner harness concern. Decision needed when you wire the conformance harness in phase G. Options: (a) seed admin via DB fixture, (b) add a `/_test/promote-admin` endpoint behind a test-only flag, (c) require external SDK harness to provision. Pick when the harness lands.
+- **First-admin bootstrap** in role-gated examples — currently a runner harness concern. Decision needed when you wire phase G. Options: (a) seed admin via DB fixture, (b) add a `/_test/promote-admin` endpoint behind a test-only flag, (c) require external SDK harness to provision. Pick when the harness lands.
+- **`subscribe` block-form syntax** (`subscribe X -> on event(...) { if cond then ask Y }`) used in `examples/airbnb/booking.candy` but not formally in `GRAMMAR.md`. Ratify in a small grammar PR before phase A's prompt consumes it.
 
 ---
 
@@ -254,4 +277,4 @@ When all are green, file a PR titled `chore: declare candy alpha 0.1.0`. Tag `v0
 
 ## 12. One-line summary for the next session
 
-> Next session inherits a foundation-complete candy. Drive to alpha by: (1) merging the linter and codegen prompts, (2) generating + eval-passing auth/todo/wallet across at least 1 target, (3) finding any spec regressions and fixing GRAMMAR.md as needed. Don't scale to airbnb/billing/notifications until the small examples are green. Use parallel sonnet sub-agents with shared contracts; commit atomically; trust the agent-self-report quality gate. The user is hands-off and has authorized you to drive.
+> Next session inherits a foundation-complete candy with all 6 codegen-architecture decisions LOCKED (#36 closed). Two unblocked phases: A (codegen prompts, #12) and B (Rust CLI scaffold + `candy lint` + npm wrapper, #39). Run them in parallel — A as orchestrator-authored, B as a sonnet sub-agent (Rust is its sweet spot). Then C/D/E/F/G/H per phase plan. Don't scale to airbnb/billing/notifications until auth/todo/wallet are green. Use parallel sonnet sub-agents with shared contracts; commit atomically; trust the agent-self-report quality gate. The user is hands-off and has authorized you to drive.
