@@ -56,9 +56,12 @@ holds the why) but lives once in the table under ENTITY.
    in the type declaration.
 5. **Time is UTC; `now` is an input.** Actors and flows receive `now` as a
    parameter. Never call a global clock.
-6. **Idempotency keys are explicit.** Replayable messages declare a
-   `key: Key` parameter. Replay returns the prior result; effects do not run
-   twice.
+6. **Idempotency keys are explicit.** Replayable messages declare a `key`
+   parameter of an opaque type. The conventional declaration is
+   `type Key opaque { max: 128 }` and the parameter is written `key: Key`,
+   but the type identifier is project-defined — projects may use a
+   different name (e.g. `IdempotencyKey`) without changing the rule.
+   Replay returns the prior result; effects do not run twice.
 7. **One actor owns its state.** No other actor reads or writes another
    actor's state directly. Cross-actor mutation goes through a `flow`.
 
@@ -510,6 +513,29 @@ Type composition:
   union `A | B | C`).
 - `unit` — built-in unit type (no value).
 
+### Built-in named types
+
+Two named types are built into the language. Projects do not declare
+them; references resolve without a `type` block.
+
+| Type        | Equivalent shape         | Used as                                                        |
+|-------------|--------------------------|----------------------------------------------------------------|
+| `Id`        | `opaque { max: 64 }`     | The implicit type of an actor's `id` parameter (`actor Foo(id: Id)`) and any identifier where the project does not declare a more specific id type. |
+| `Timestamp` | `instant { tz: utc }`    | The type of `now: Timestamp` parameters and event-payload `at: Timestamp` fields. UTC, always. |
+
+These two are the **only** universally built-in named types. Everything
+else a project uses (`Money`, `Email`, `Password`, `PasswordHash`,
+`Token`, `Key`, `Role`, `CouponCode`, ...) is a project-declared `type`
+block — even when the canonical shape is repeated identically across
+examples in this repo. Per-project declarations preserve the freedom
+to vary constraints (currency for `Money`, format for `Email`, length
+caps for opaque tokens, policy attachments on `Password`) without
+forcing a global default.
+
+`Id` and `Timestamp` may be shadowed: a project that wants stricter
+semantics can declare its own `type Id ...` or `type Timestamp ...` and
+that declaration wins.
+
 ---
 
 ## invariant
@@ -567,8 +593,10 @@ declared in `candy.toml`.
 
 ## Cross-cutting conventions
 
-**Idempotency.** Any replayable message accepts `key: Key`. The same key
-returns the prior result without re-applying effects.
+**Idempotency.** Any replayable message accepts a `key` parameter of an
+opaque type — by convention `key: Key`, where `Key` is a project-declared
+opaque type. The same key returns the prior result without re-applying
+effects.
 
 **Time.** `now: Timestamp` is passed in. Durations are written `7d`, `10m`,
 `1h`, `30s`, `500ms`. Arithmetic: `now after 7d`, `expires before now`.
