@@ -191,6 +191,50 @@ actor Booking(id: Id) {
 The subscriber doesn't know which provider fired the event; the contract is
 the event shape on the external actor.
 
+### subscribe — terse and block forms
+
+`subscribe` has two surface forms. Both are valid; pick whichever reads
+clearer for the handler.
+
+**Terse form** — direct dispatch to a flow or actor message. The
+arguments are positional fields from the event payload, in declaration
+order:
+
+```candy
+subscribe ChargeSucceeded -> ConfirmBooking(charge)
+```
+
+**Block form** — destructures the event payload by field name into a
+named binding, then runs a body. The body is one or more
+flow-shape statements: `ask`/`tell`/conditionals built from `if … then`.
+Use this when the subscriber needs a guard or wants to bind multiple
+payload fields by name:
+
+```candy
+subscribe ChargeSucceeded -> on event(charge, booking, at) {
+  if booking == self.id then ask Confirm(charge, at)
+}
+
+subscribe ChargeFailed -> on event(charge, booking, reason, at) {
+  if booking == self.id then ask SetCancelled(reason, none, at)
+}
+```
+
+Rules:
+
+- The names inside `on event(...)` must match field names declared in
+  the event's `payload:`. Unknown names are an error.
+- Names may be a subset of the payload — bind only what the body uses.
+- Body statements are subject to the same flow semantics: `ask`
+  awaits, `tell` is fire-and-forget, conditionals use `if cond then
+  expression` (no `else` returns unit on the false branch).
+- Each `subscribe` line registers one subscriber on the enclosing
+  actor; multiple subscribes on the same event compose at codegen
+  time into separate handler registrations.
+- Block form is required when the subscriber is guarded by event
+  payload (the common "match on `self.id`" pattern at codegen-derived
+  webhook dispatch). Terse form should not carry a guard.
+
 Webhook routes are **codegen-derived** — when an external actor declares
 `emits`, the codegen produces the inbound HTTP handler that validates the
 provider's signature and dispatches to subscribers. The spec does not
