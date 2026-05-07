@@ -1,0 +1,12 @@
+/home/me/candy/.claude/worktrees/agent-af7319d90921a6270/examples/auth/targets/rust/target/debug/deps/thiserror-d226497dcdecaf48.d: /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /home/me/candy/.claude/worktrees/agent-af7319d90921a6270/examples/auth/targets/rust/target/debug/build/thiserror-983c129de87c3711/out/private.rs
+
+/home/me/candy/.claude/worktrees/agent-af7319d90921a6270/examples/auth/targets/rust/target/debug/deps/libthiserror-d226497dcdecaf48.rmeta: /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /home/me/candy/.claude/worktrees/agent-af7319d90921a6270/examples/auth/targets/rust/target/debug/build/thiserror-983c129de87c3711/out/private.rs
+
+/home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/home/me/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/home/me/candy/.claude/worktrees/agent-af7319d90921a6270/examples/auth/targets/rust/target/debug/build/thiserror-983c129de87c3711/out/private.rs:
+
+# env-dep:OUT_DIR=/home/me/candy/.claude/worktrees/agent-af7319d90921a6270/examples/auth/targets/rust/target/debug/build/thiserror-983c129de87c3711/out

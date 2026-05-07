@@ -1,0 +1,56 @@
+# generated from examples/auth/auth.candy
+# candy runtime 0.1
+# do not edit — regenerate from spec
+
+[package]
+name = "auth"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "auth"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tokio = { version = "1", features = ["full"] }
+
+# DB — rusqlite per preferences.candy
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# ID — uuid v7 per preferences.candy
+uuid = { version = "1", features = ["v7", "serde"] }
+
+# Hashing — argon2 per preferences.candy
+argon2 = { version = "0.5", features = ["std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# JWT — jsonwebtoken per preferences.candy
+jsonwebtoken = "9"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error types
+thiserror = "1"
+anyhow = "1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Env / config
+dotenvy = "0.15"
+
+# Sync primitives
+parking_lot = "0.12"
+
+[dev-dependencies]
+tokio-test = "0.4"
