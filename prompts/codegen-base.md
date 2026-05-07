@@ -201,7 +201,26 @@ A typed message broadcast to subscribers.
 | `order: by Field`     | Deliver in order of `Field` per consumer.                  |
 | `order: total`        | Single global order.                                       |
 | `order: causal`       | Vector-clock ordering.                                     |
-| `subscribe X -> Op`   | Register the subscriber inside the actor's bootstrap.      |
+| `subscribe X -> Op`   | Register the subscriber on the enclosing actor. Two forms — see below. |
+
+`subscribe` has two surface forms (GRAMMAR.md "subscribe — terse and block forms"):
+
+- **Terse**: `subscribe X -> Handler(args)`. Arguments are positional
+  fields from the event payload. Compile to a direct dispatch.
+- **Block**: `subscribe X -> on event(field, ...) { body }`. The
+  `on event(...)` list destructures the payload by field name; the
+  body is one or more flow-shape statements (`ask`/`tell`/`if … then
+  ...`). Compile to: receive event → bind the named fields → run the
+  body in the subscribing actor's context (`self` is the instance
+  that owns the subscribe).
+
+Block-form bindings inside `on event(...)` must match field names
+declared in `event X { payload: { ... } }`. Unknown names are a
+generation error. Names may be a subset of the payload — bind only
+what the body uses. Use the block form when the subscriber needs a
+guard (the common `if event.field == self.id then ask ...` pattern at
+codegen-derived webhook dispatch); the terse form should not carry a
+guard.
 
 If the runtime substrate (the target's chosen queue/event-bus library)
 does not support a declared delivery mode, refuse to generate and report
