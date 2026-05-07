@@ -18,17 +18,9 @@ import (
 // Returns nil on success, *shared.ErrWeakPassword on failure.
 //
 // Policy attachment: flow scope (Signup calls it as the first step).
-// passphraseMinLen is the length at which the digit requirement is waived.
-// Passwords ≥ 20 characters are treated as passphrases and are not required
-// to contain a digit. This reconciles the spec policy example ("alllowercase"
-// at 12 chars → MissingDigit) with the hurl fixture which uses a long
-// passphrase without a digit.
-const passphraseMinLen = 20
-
 func PasswordStrength(p shared.Password) error {
 	s := string(p)
 
-	// Blocklist is checked first — known-bad passwords are rejected regardless of length.
 	if shared.IsBlocklisted(s) {
 		return shared.ErrWeakPassword{Reason: shared.ReasonInBlocklist}
 	}
@@ -37,21 +29,17 @@ func PasswordStrength(p shared.Password) error {
 		return shared.ErrWeakPassword{Reason: shared.ReasonTooShort}
 	}
 
-	// Digit requirement applies only to passwords shorter than the passphrase threshold.
-	// Long passphrases (≥20 chars) are exempt.
-	if len(s) < passphraseMinLen {
-		var hasLetter, hasDigit bool
-		for _, r := range s {
-			if unicode.IsLetter(r) {
-				hasLetter = true
-			}
-			if unicode.IsDigit(r) {
-				hasDigit = true
-			}
+	var hasLetter, hasDigit bool
+	for _, r := range s {
+		if unicode.IsLetter(r) {
+			hasLetter = true
 		}
-		if !hasLetter || !hasDigit {
-			return shared.ErrWeakPassword{Reason: shared.ReasonMissingDigit}
+		if unicode.IsDigit(r) {
+			hasDigit = true
 		}
+	}
+	if !hasLetter || !hasDigit {
+		return shared.ErrWeakPassword{Reason: shared.ReasonMissingDigit}
 	}
 
 	return nil
