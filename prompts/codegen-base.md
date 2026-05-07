@@ -246,6 +246,32 @@ the mismatch. Don't downgrade silently.
 Identity types (`type Id ...`): generate an opaque wrapper so an `UserId`
 cannot be passed where a `BookingId` is expected.
 
+### `spec`
+
+A `spec` block is a `type` with prose, examples, and reuse semantics
+(GRAMMAR.md "spec"). Compile it identically to its underlying `type`:
+
+| Spec construct                              | Emission contract                                 |
+|---------------------------------------------|---------------------------------------------------|
+| `spec X primitive { ... }`                  | Emit as if `type X primitive { ... body ... }`.   |
+| `examples:` cases on the spec               | Generate unit tests asserting each `given`/`then` mapping (same as `policy`). |
+| `currency: parameter` (or any `parameter` value) | This spec is unparameterized; refuse to use it as a type without an applied parameterization. |
+| `use spec X`                                | Resolve `X` (project-local first; then `[deps]`); emit as if the resolved spec body had been written inline as a `type` block in this file. |
+| `use spec X(field: value, ...)`             | Apply the parameter substitution to the resolved spec, then emit as for `use spec X`. |
+| `spec X primitive refines { ... }`          | Resolve the original `X`, apply the listed overrides, emit as if the merged shape had been written inline as a `type X` declaration. |
+
+Resolution rules for `use spec X`:
+
+1. Project-local `spec X` declaration wins.
+2. Otherwise, look up `X` in projects listed in `candy.toml` `[deps]`,
+   in declaration order.
+3. If unresolved, refuse and report `unresolved use spec X` with the
+   file and line.
+
+A spec cannot be used as a type until every `parameter` field is
+filled — either by `use spec X(field: value)` at the consumption site,
+or by `refines` substituting a value. Generation fails otherwise.
+
 ### `invariant`
 
 | Form                              | Emission contract                                 |
