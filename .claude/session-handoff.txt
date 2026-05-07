@@ -1,0 +1,257 @@
+# CANDY — SESSION HANDOFF
+
+**Owner:** the next Claude Code session that picks up this project
+**Goal:** drive candy to first alpha — a working spec → backend → behavioral conformance pipeline for at least 3 examples on at least 1 target
+**Authority:** the user has explicitly authorized "take over until satisfied." Don't wait for permission on locked decisions; surface deviations clearly when you make them.
+
+---
+
+## 1. Mission
+
+Reach **candy alpha**: a candy spec language with a linter and a codegen prompt that, applied to one of the canonical examples, produces a backend in at least one target language that passes its hurl conformance evals. Validate with three small examples first (auth → todo → wallet) before scaling to the harder ones (billing, notifications, airbnb).
+
+The user's explicit framing: *"I want us to reach the first alpha or candy and get our first MVP to test/prove the concept. You will ensure we have the pre-requisite integration test and find any edges in our candy spec that regresses. Ideally work with 3 small scoped examples first to validate candy syntax until we are confident, then spin up agents to implement the other harder examples until we confidently have a candy spec that is good enough to test out on a new project."*
+
+A stretch goal: a skill that bootstraps candy on an existing project. **Deferred** — file a strategy issue, don't build it yet.
+
+---
+
+## 2. Current state (2026-05-07)
+
+### Repository
+- Branch: `main` is at `0233ef8` (after merging #34 eval framework and #35 retro)
+- 7 example projects shipped (`hello`, `auth`, `todo`, `wallet`, `airbnb`, `billing`, `notifications`)
+- Eval framework: 18 files (README, COVERAGE, 6 fixtures.env, 9 .md+.hurl pairs)
+- Editor extensions: Neovim (verified live), VS Code (shipped), tree-sitter skeleton
+- Documentation: GRAMMAR.md, docs/{architecture,externals,features,candy-toml}.md
+- M1 retrospective in `.retrospective/phase-M1-foundation.md`
+
+### Open PRs
+None (you may be opening this very PR with the handoff).
+
+### Open issues — priority order
+1. **#36 [gen] Discuss codegen wave architecture before execution** — 6 decisions to make. Recommendations are in section 7 below; lock them or argue if you disagree.
+2. **#12 [gen] Author candy/codegen system prompt** — blocked on #36
+3. **#13 [gen] Generate Go (chi) backend** — blocked on #12
+4. **#14 [gen] Generate Rust (axum) backend** — blocked on #12
+5. **#15 [gen] Generate TypeScript (hono) backend** — blocked on #12
+6. **#16 [gen] Generate Python (fastapi) backend** — blocked on #12
+7. **#17 [tests] Run auth.hurl against each target** — blocked on at least one of #13–#16
+8. **#23 [pi,future]** — labeled `future`, depends on #12
+
+You will likely also file:
+- **NEW** Linter v0.1 implementation (per #36 decision)
+- **NEW** Strategy doc for candy-on-existing-project skill (deferred build)
+
+---
+
+## 3. Definition of "alpha"
+
+Alpha is reached when ALL the following are true:
+
+| # | Criterion |
+|---|---|
+| 1 | Candy linter v0.1 ships under `@tensorkit/candy-lint` and passes on every spec in `examples/` |
+| 2 | Codegen prompts ship in `prompts/` (option (c) — base + thin skill-dispatched overlays) |
+| 3 | The auth example generates a Go/chi backend that passes `evals/auth/auth.hurl` end-to-end |
+| 4 | At least one of {Rust, TypeScript, Python} also generates auth and passes |
+| 5 | The todo example (RBAC) generates and passes its evals on at least 1 target |
+| 6 | The wallet example (TIME axis via scheduled transfers) generates and passes its evals on at least 1 target |
+| 7 | A "what we'd do differently" section exists in a follow-up retrospective once items 1–6 land |
+
+3 small scoped examples = auth + todo + wallet. Each tests a different facet:
+- **auth** — JWT, SQLite, password hashing, opaque error variants
+- **todo** — RBAC role matrix, policy attachment, idempotency
+- **wallet** — admin/user split, scheduled transfers (TIME axis), money primitives, journal-as-source-of-truth
+
+After 1–6 are green for those 3 examples, you have proven the candy syntax. THEN spin up parallel agents for the harder examples (billing's three schedules, notifications' multi-provider rescue chains, airbnb's saga).
+
+Anything past alpha (more targets, more examples, more automation, the existing-project skill) is post-alpha. Don't scope-creep.
+
+---
+
+## 4. Strategy
+
+### Validate small first
+The harder examples (airbnb, billing, notifications) will surface every edge in the candy spec. Don't scale to them until the simpler examples (auth, todo, wallet) generate cleanly. If wallet's schedule predicate breaks codegen, that's a spec/grammar problem that will compound across billing.
+
+### Linter is a quality gate, not a polish item
+Build the linter EARLY. It catches spec issues before they land in the prompt as edge cases the prompt has to handle. The codegen prompt should be able to assume "input passes the linter."
+
+### Use existing language-best-practices skills
+`golang-best-practices`, `rust-best-practices`, `react-best-practices`, `nestjs-best-practices` exist as Claude Code skills. The codegen overlays per target should be thin (~100 lines) — candy-specific bindings only — and dispatch to those skills for idiom guidance. Don't re-write idiomatic Go in a candy prompt.
+
+### Sub-agent self-reporting is your quality gate
+Three real bugs in M1 were caught only because sub-agents flagged judgment calls in their delivery reports. When you spawn sub-agents, REQUIRE they report judgment calls explicitly. Read those reports before committing.
+
+### Find regressions in the spec
+The user explicitly asked for "any edges in our candy spec that regresses." When you generate a backend and the eval fails, ask: was the spec ambiguous? Could the linter have caught it? File issues against `GRAMMAR.md` if you find ones — don't paper over them in the prompt.
+
+---
+
+## 5. Phase plan
+
+| Phase | Scope | Issue closes | Branch suffix |
+|---|---|---|---|
+| **0** | Decide #36 (or accept the recommendations below) | #36 | (no PR — comment + close) |
+| **A** | Candy linter v0.1 (`@tensorkit/candy-lint`, TypeScript, npx-runnable) | NEW issue | `feat/linter-v01` |
+| **B** | Codegen prompts (base + 4 thin overlays) | #12 | `feat/codegen-prompts` |
+| **C** | POC: auth → Go/chi → eval green | #13 (auth) | `feat/codegen-auth-go` |
+| **D** | Auth on Rust / TS / Python | #14, #15, #16 (auth) | per-target branches |
+| **E** | Validate small examples: todo + wallet across targets, fix spec/grammar regressions as found | partial #13–#16 | `feat/validate-todo-wallet` |
+| **F** | Harder examples (parallel sonnet sub-agents): billing, notifications, airbnb | full #13–#16 | `feat/codegen-harder-examples` |
+| **G** | Conformance harness (CI workflow + per-target startup) | #17 | `feat/conformance-harness` |
+| **H** | Final retrospective: "what we'd do differently" — uncloses the deferred section in M1 retro | (file via retro skill) | `chore/retro-alpha` |
+
+A and B are independent — could go in parallel (separate PRs). C depends on B. E depends on D. F can be parallelized across examples once E proves the pattern.
+
+---
+
+## 6. Rules of the road (proven in M1 — don't relearn)
+
+### Commits
+- **Atomic per logical change.** One issue closed = one commit when possible. Multi-step refactors get one commit per step.
+- **Never `git add -A`.** Stage explicitly. M1 had to do `git reset HEAD~1` to recover from a bundled commit.
+- **Conventional commits**: `type(scope): subject`. Types in use: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`. Append `!` for breaking changes.
+- **Multi-line messages**: HEREDOC in bash — `git commit -m "$(cat <<'EOF' ... EOF)"`.
+- **No AI attribution**. The user has it disabled. Don't add `Co-Authored-By: Claude` or "Generated with Claude Code" to commits. (PR descriptions can have attribution.)
+
+### Branches and PRs
+- Branch off `main`: `feat/` for features, `chore/` for maintenance, `docs/` for documentation, `refactor/` for non-functional changes.
+- One PR per wave — multiple atomic commits inside.
+- After merge, delete branch local + remote: `git branch -d <b> && git push origin --delete <b>`.
+
+### Sub-agents (the proven pattern)
+- **Sonnet for parallel waves; opus for orchestration.** Use `model: "sonnet"` on the Agent tool.
+- **`run_in_background: true`** so multiple agents run truly in parallel.
+- **Spawn N agents in a SINGLE assistant message** with multiple Agent tool calls. The harness runs them concurrently.
+- **Pre-write a SHARED CONTRACT** before spawning — a README with all symbol names, type shapes, and exports that every agent will reference. The airbnb wave's project README was this artifact for spec evolution. Without it, parallel agents drift.
+- **Each agent writes its own file(s); orchestrator commits.** Don't have agents commit — they can race on git index.
+- **Read the agent's RETURN REPORT.** Each agent reports judgment calls and deferrals. This is your last quality gate before commit.
+
+### Memory
+- Save in `/home/me/.claude/projects/-home-me-candy/memory/`.
+- Index in `MEMORY.md` (one line per entry, ~150 chars).
+- Current entries: `npm_namespace.md` (`@tensorkit`).
+- Update or remove memories that go stale. Don't write memories about code patterns/architecture — those live in the repo.
+
+### Editor / linter conventions
+- Stay token-equivalent across Neovim and VS Code highlighters. When you add a keyword to one, add it to the other.
+- Update GRAMMAR.md keyword count if you add/remove keywords.
+
+### npm
+- Namespace: **`@tensorkit`** (locked, see memory).
+- The linter ships as `@tensorkit/candy-lint`. Future packages also under `@tensorkit/`.
+
+---
+
+## 7. Decisions
+
+### Locked (don't undo without strong reason)
+
+| Decision | Where it lives | Rationale |
+|---|---|---|
+| Multi-provider externals via Sketch B (`providers:` field + `Actor[Tag]` selector) | GRAMMAR.md, examples/airbnb/externals.candy | Single source of truth; minimal keyword cost (1 new keyword) |
+| Preferences format: candy DSL (not TOML) | examples/*/preferences.candy | "when need X use Y" reads as intent; single-language consistency |
+| RBAC scope: folded into `todo` (standalone rbac deleted) | examples/todo/todo.candy | One example per concept |
+| airbnb time granularity: minute (`TimeRange` not `DateRange`) | examples/airbnb/types.candy | Eval cycles in seconds |
+| Canonical billing provider: Polar | examples/billing/preferences.candy | User has API key |
+| Canonical email provider: Postmark | examples/notifications/preferences.candy | User has access |
+| Eval format: hybrid `<feature>.md` + `<feature>.hurl` | evals/README.md | Narrative + executable, both stay aligned |
+| npm namespace: `@tensorkit` | memory: `npm_namespace.md` | Project-owned namespace |
+| Codegen prompt: option (c) — base + thin skill-dispatched overlays | (recommended below; not yet locked) | Less drift, leverages existing skills |
+
+### Open (per issue #36) — recommended answers
+
+If you have no strong reason to deviate, take these and close #36.
+
+1. **Prompt structure**: **(c)** base + thin overlays + dispatch to existing language skills. ~1000 lines total instead of ~2000.
+2. **Linter rule set**: **ship as listed** in #36 (10 rules). Add rules later as edges surface during codegen.
+3. **Linter language**: **TypeScript** (Node, npx-distributable). Rust is faster but heavier; TS is appropriate for v0.1 because npx is the user-facing surface.
+4. **Orchestrator**: **skill first, CLI later**. The skill ships with the prompts; a `candy gen` CLI command is post-alpha.
+5. **Sequencing**: **A and B in parallel** (separate PRs). They're independent; doing them in parallel halves the elapsed time before C unblocks.
+6. **Conformance harness**: **CI workflow first, harness moves into candy CLI v0.2**. CI is concrete and unblocks #17; CLI is downstream.
+
+### Open (no recommendation, surface to user before deciding)
+
+- **First-admin bootstrap** in role-gated examples — currently a runner harness concern. Decision needed when you wire the conformance harness in phase G. Options: (a) seed admin via DB fixture, (b) add a `/_test/promote-admin` endpoint behind a test-only flag, (c) require external SDK harness to provision. Pick when the harness lands.
+
+---
+
+## 8. How to make progress
+
+### Read first
+1. This document.
+2. `git log --oneline -10` and `gh issue list --state open` and `gh pr list --state open`.
+3. `.retrospective/phase-M1-foundation.md` (M1 retro — the design discoveries section is essential).
+4. `evals/README.md` (the conformance contract).
+5. `GRAMMAR.md` (the language reference).
+6. `eval.txt` (the user's freeform notes that informed M1's late spec evolutions; useful for understanding their style).
+
+### Pacing
+- Don't ask the user before each step. They've explicitly authorized you to drive.
+- DO ask before destructive operations (force push, history rewrite, deletion of meaningful files).
+- DO surface deviations from this plan when you make them. Don't silently change strategy.
+- DO ship PRs, not WIP commits. Atomic per logical change.
+
+### Communication
+- Brief. The user prefers tight, direct status. Lead with the answer; "why" goes second.
+- Honest. Surface failures, line-count overruns, deviations. The "Failure Recovery" pattern in `~/.claude/CLAUDE.md` says: if a fix doesn't work after two attempts, stop, read top-down, identify the wrong mental model, propose something fundamentally different.
+- No emojis. No AI attribution in commits. PR descriptions can include the standard 🤖 footer.
+
+### When you hit a hard decision
+1. Check this handoff for an answer.
+2. Check the M1 retro for analogous patterns.
+3. Check `.claude/retrospective.config.json` for project context.
+4. If none of those answer it: surface to the user with options + recommendation; don't guess.
+
+---
+
+## 9. Deferred items
+
+### Pi.dev extension (#23)
+Labeled `future`. Depends on #12 (codegen prompt). After alpha, when codegen is mature, this becomes implementable. Don't pick up early.
+
+### candy-on-existing-project skill (NOT YET FILED)
+The user mentioned this as an alpha stretch goal: "if possible a skill that can setup candy off an existing project." Status: **deferred build**, but file a strategy issue.
+
+Strategy hooks for the issue body:
+- Skill introspects an existing codebase (Go, Rust, TS, Python project).
+- Identifies entities (DB models → actors), routes (HTTP handlers → controllers), business logic (saga-shaped functions → flows).
+- Produces a starter `.candy` spec the user iterates on.
+- The hard part: inferring intent from code (what `prose` text to write) and policies (which constraints the code is enforcing implicitly).
+
+File this as `[gen,future] [strategy] candy bootstrapper for existing projects` once the codegen wave proves the round-trip direction (spec → code).
+
+---
+
+## 10. Success metrics
+
+The handoff is "done" (alpha reached) when:
+
+- Linter v0.1 merged. `npx @tensorkit/candy-lint examples/` passes on every spec.
+- Codegen prompts merged. `prompts/codegen-base.md` + 4 overlays.
+- `examples/auth/targets/go/` is a working Go/chi backend, generated from auth.candy.
+- `evals/auth/auth.hurl` runs green against that backend.
+- One additional target (Rust or TS or Python) also generates auth and passes.
+- todo and wallet examples generate (on at least 1 target) and pass their evals.
+- A post-alpha retrospective ships, with the deferred "what didn't work" from M1 resolved.
+
+When all are green, file a PR titled `chore: declare candy alpha 0.1.0`. Tag `v0.1.0-alpha`. Close the relevant tracking issues.
+
+---
+
+## 11. Memory pointers
+
+- **Auto-loaded each session**: `/home/me/.claude/projects/-home-me-candy/memory/MEMORY.md`
+  - Currently: `npm_namespace.md` (`@tensorkit`)
+- **Global directives**: `/home/me/.claude/CLAUDE.md`
+  - Notable: phased execution, atomic commits, no AI footers, sub-agent reports as quality gate
+- **Retrospective**: `.retrospective/phase-M1-foundation.md` and `.retrospective/SUMMARY.md`
+- **Eval design notes**: `eval.txt` (the user's freeform input that drove the spec evolutions)
+
+---
+
+## 12. One-line summary for the next session
+
+> Next session inherits a foundation-complete candy. Drive to alpha by: (1) merging the linter and codegen prompts, (2) generating + eval-passing auth/todo/wallet across at least 1 target, (3) finding any spec regressions and fixing GRAMMAR.md as needed. Don't scale to airbnb/billing/notifications until the small examples are green. Use parallel sonnet sub-agents with shared contracts; commit atomically; trust the agent-self-report quality gate. The user is hands-off and has authorized you to drive.
