@@ -201,21 +201,10 @@ impl Project {
         for p in PRIMITIVES {
             map.insert(p.to_string(), BlockKind::Type);
         }
-        // common built-in function names that appear in type positions
-        for bi in &[
-            "Key",
-            "Timestamp",
-            "Money",
-            "Email",
-            "Password",
-            "Token",
-            "Id",
-            "Role",
-            "bool",
-            "string",
-            "int",
-            "unit",
-        ] {
+        // built-in named types (GRAMMAR.md §type "Built-in named types"):
+        // Id and Timestamp are universally built-in. Everything else
+        // (Money, Email, Password, Key, Token, Role, ...) is project-declared.
+        for bi in &["Id", "Timestamp"] {
             map.entry(bi.to_string()).or_insert(BlockKind::Type);
         }
         map
