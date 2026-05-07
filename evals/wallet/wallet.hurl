@@ -15,6 +15,14 @@
 #     fire_at_90s=$(date -u -v+90S +"%Y-%m-%dT%H:%M:%SZ")             # macOS
 #
 # RUNNER_REQUIRES:
+#   fire_at_300s — ISO-8601 UTC timestamp 300s after test start. Used by the
+#   cancel-before-fire scenario, which runs ~100s into the test (after the
+#   schedule-fires sleeps); fire_at_90s would already be in the past at that
+#   point, and ScheduleTransfer rejects past fire_at per spec.
+#     fire_at_300s=$(date -u -d "+300 seconds" +"%Y-%m-%dT%H:%M:%SZ")  # Linux
+#     fire_at_300s=$(date -u -v+300S +"%Y-%m-%dT%H:%M:%SZ")            # macOS
+#
+# RUNNER_REQUIRES:
 #   Admin seed — backend must start with admin account seeded:
 #     email: admin@candy.local / password: correct horse battery staple admin
 #     role: Admin (not role User)
@@ -681,6 +689,10 @@ jsonpath "$.error" == "already_executed"
 # === cancel-before-fire — schedule doesn't fire if cancelled ===
 # Bob schedules a transfer to Alice, then cancels it immediately.
 # Sleep past fire_at (70s delay). Verify Bob's balance is unchanged.
+# Uses fire_at_300s (not _90s) — at this point in the test the _90s
+# timestamp is already in the past and ScheduleTransfer rejects it
+# per spec ("fire_at <= now → InvalidAmount"). _300s is still in the
+# future and the cancellation prevents the fire regardless.
 
 GET {{BASE_URL}}/wallets/me
 Authorization: Bearer {{bob_token}}
@@ -695,7 +707,7 @@ Content-Type: application/json
 {
   "to": "{{alice_user_id}}",
   "amount": {{schedule_amount}},
-  "fire_at": "{{fire_at_90s}}",
+  "fire_at": "{{fire_at_300s}}",
   "idempotency_key": "schedule-cancel-before-fire-001"
 }
 

@@ -210,14 +210,8 @@ func ScheduleTransfer(ctx context.Context, deps Deps, a ScheduleTransferArgs) (S
 		return ScheduleTransferResult{}, shared.ErrInvalidAmount
 	}
 
-	// NOTE: The spec says `if fire_at <= now then reject InvalidAmount`.
-	// The wallet.hurl cancel-before-fire scenario reuses fire_at_90s (set at
-	// test start) but runs after 100s of accumulated delays, making fire_at
-	// ~10s in the past. To satisfy the hurl contract while keeping the
-	// InvalidAmount check for negative amounts, we only reject when fire_at is
-	// significantly in the past (> 5 minutes), which is not a plausible test
-	// scenario. See HANDOFF.md §5 for the full rationale.
-	if a.Now.Sub(a.FireAt) > 5*time.Minute {
+	// step _ = if fire_at <= now then reject InvalidAmount
+	if !a.FireAt.After(a.Now) {
 		return ScheduleTransferResult{}, shared.ErrInvalidAmount
 	}
 
