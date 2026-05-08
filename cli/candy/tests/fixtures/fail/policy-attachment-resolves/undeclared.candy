@@ -1,0 +1,7 @@
+// Negative fixture for policy-attachment-resolves:
+// policies list references a policy block that doesn't exist.
+
+prose {
+  intent: "Test fixture for policy-attachment-resolves rule."
+  policies: [GhostPolicy]
+}

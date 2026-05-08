@@ -1,0 +1,13 @@
+// Negative fixture for schedule-syntax-valid:
+// schedule has no every/at and no for clause.
+
+prose {
+  intent: "Test fixture for schedule-syntax-valid rule."
+}
+
+flow DoWork(id: Id, now: Timestamp) -> unit {
+  intent: "does work"
+  commit
+}
+
+schedule DoWork(id, now)

@@ -1,0 +1,29 @@
+{
+  "name": "@tensorkit/candy",
+  "version": "0.1.0",
+  "description": "candy spec language toolchain — linter, generator, and formatter",
+  "license": "MIT",
+  "bin": {
+    "candy": "./bin/candy"
+  },
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  },
+  "files": [
+    "bin/",
+    "postinstall.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CallipsosNetwork/candy"
+  },
+  "keywords": [
+    "candy",
+    "spec",
+    "linter",
+    "dsl"
+  ]
+}

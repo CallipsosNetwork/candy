@@ -1,0 +1,17 @@
+// Negative fixture for actor-state-defaults-typed:
+// bool field has a non-boolean default value.
+
+prose {
+  intent: "Test fixture for actor-state-defaults-typed rule."
+}
+
+type Id opaque { max: 64 }
+type Timestamp instant { tz: utc }
+
+actor Widget(id: Id) {
+  state {
+    active: bool = "yes"
+    name: string
+    created: Timestamp
+  }
+}
