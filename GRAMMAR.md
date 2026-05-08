@@ -20,9 +20,9 @@ words in each, and you can read any candy file.
 
 ```
 ENTITY      things that exist
-            actor  external  state  config  providers  enum  type
+            actor  external  state  config  providers  enum  type  spec
             derive  journal  audit  self  id
-            flow  controller  event  policy  target  prose
+            flow  controller  event  policy  target  prose  refines
 
 ACTION      things that happen
             ask  tell  emit  emits  effect  commit  compensate  reject
@@ -38,9 +38,11 @@ INTENT      why this exists, what good looks like
             intent  examples  because
 ```
 
-`flow`, `controller`, `event`, `policy` are block-defining ENTITY keywords —
-they declare a thing in the system. `policy` is also an INTENT primitive (it
-holds the why) but lives once in the table under ENTITY.
+`flow`, `controller`, `event`, `policy`, `spec` are block-defining ENTITY
+keywords — they declare a thing in the system. `policy` is also an INTENT
+primitive (it holds the why) but lives once in the table under ENTITY.
+`refines` is an ENTITY modifier — it attaches to a `spec` block to extend or
+override an imported spec.
 
 ---
 
@@ -76,6 +78,7 @@ holds the why) but lives once in the table under ENTITY.
 | `event`           | A typed message broadcast to subscribers.                |
 | `type`            | A record, or a branded primitive with pinned semantics.  |
 | `enum`            | A sum (variant) type.                                    |
+| `spec`            | A reusable type contract — shape, constraints, prose, examples. Compiles to a `type`. |
 | `invariant`       | A truth that must hold (actor-local or system-wide).     |
 | `prose`           | Feature interface — intent, exports, uses, policies.     |
 | `target`          | Per-target library and idiom preferences (preferences.candy). |
@@ -553,6 +556,136 @@ Type composition:
 - `Result<Ok, Err>` — success or failure (where `Err` is one variant or a
   union `A | B | C`).
 - `unit` — built-in unit type (no value).
+
+---
+
+## spec
+
+A `spec` block is a reusable type contract: an underlying primitive plus
+constraints, prose, and examples. It compiles to a `type` — semantics are
+identical, the difference is verbosity and reuse.
+
+Use `spec` when the same shape repeats across projects (`Email`, `Money`,
+`Hash`, `Token`) and you want one canonical definition. Use `type` when
+the shape is project-local.
+
+```candy
+spec Email string {
+  intent: """
+    An RFC 5322 email address. Length capped at 320 characters.
+    Comparison is case-insensitive on the local part.
+  """
+
+  max:    320
+  format: rfc5322
+  trim:   on-construction
+
+  examples:
+    - given: "alice@example.com"
+      then:  ok
+    - given: "no-at-sign"
+      then:  err(BadEmail)
+}
+```
+
+A `spec` block has:
+
+- **A name** — `Email` here. Becomes the type name when the spec is
+  consumed.
+- **An underlying primitive** — `string` here. Same fixed set as `type`:
+  `int`, `string`, `opaque`, `bool`, `bytes`, `instant`, `decimal`.
+- **`intent:`** — prose describing what the type means and why.
+- **Meta-fields** — `max`, `format`, `currency`, `unit`, `round`, `tz`,
+  ... — the same set `type` block bodies use, plus any spec-specific
+  fields the spec author needs (`trim`, `compare`, `verify`, ...).
+- **`examples:`** — first-class examples in the same shape `policy`
+  uses: `given:` / `then: ok` or `then: err(...)`. Examples are
+  conformance: generated tests must pass each.
+
+### Required parameters
+
+A spec can mark a meta-field as a parameter the consumer must pin:
+
+```candy
+spec Money int {
+  intent: """Integer minor units of a pinned currency."""
+
+  unit:     minor
+  currency: parameter           // consumer fills this in
+  round:    nearest
+}
+```
+
+`parameter` is a reserved value meaning "the consumer must provide this
+when applying the spec." A spec with unfilled parameters cannot itself
+be used as a type — only its parameterized application is a valid type.
+
+### Applying a spec — `use spec`
+
+A consumer brings one or more specs into scope with `use spec`. The
+line is top-level in a `.candy` file:
+
+```candy
+use spec Email, Hash, Token                 // unparameterized
+use spec Money(currency: USD)               // pin the parameter
+```
+
+After `use spec X`, `X` is a type identifier in the file's scope. It
+behaves identically to a project-local `type X primitive { ... }`.
+
+Resolution order:
+
+1. A `spec X` block declared somewhere in the same project wins
+   (project-local always shadows imported).
+2. Otherwise, the toolchain consults `candy.toml` `[deps]` and
+   resolves `X` against the candy projects listed there.
+3. If two deps both export `X`, declaration order in `[deps]` wins.
+4. If no resolution, generation fails with a clear error.
+
+The dep-fetch resolver is future tooling; v0.1 is local-only (deps
+checked into the project tree, or a sibling repo on the local
+filesystem).
+
+### Refining a spec — `refines`
+
+A consumer can extend or override a brought-in spec:
+
+```candy
+use spec Email
+
+spec Email string refines {
+  intent: """Internal-only — org domain required."""
+  format: company-domain
+}
+```
+
+`refines` takes the brought-in spec's body, applies the listed
+overrides, and produces a project-local type that shadows the imported
+one in the rest of the file. Meta-fields not mentioned in `refines`
+carry over from the original.
+
+A `refines` block must include the same underlying primitive as the
+spec it refines. Changing the primitive is a type identity change, not
+a refinement — declare a fresh `spec` instead.
+
+### Compilation contract
+
+For codegen, a `spec` block compiles **identically** to a `type` block
+with the same shape. Codegen reads:
+
+- A direct `spec X primitive { ... }` declaration → emits the same
+  target code it would emit for `type X primitive { ... }`.
+- A `use spec X` line → resolves `X` per the rules above, then emits
+  target code as if the resolved spec body had been written inline as
+  a `type` block in this file.
+- A `spec X primitive refines { ... }` → resolves the original,
+  applies the overrides, emits as if the merged shape had been written
+  inline.
+
+Target overlays do not need spec-awareness — the spec → type
+translation happens before the target overlay runs. The
+`examples:` on each spec produce unit tests in the generated tree the
+same way `policy` examples do.
 
 ---
 
