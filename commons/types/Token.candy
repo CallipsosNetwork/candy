@@ -1,0 +1,35 @@
+// Token — opaque bearer token.
+//
+// Issued by an auth flow on successful login; carried in
+// `Authorization: Bearer <token>` headers; revoked by writing a
+// SessionRevoked event. Length cap bounds header size.
+
+spec Token opaque {
+  intent: """
+    An opaque bearer token. Carried in Authorization: Bearer headers
+    and never logged. Length capped at 256 characters to bound
+    request-header size and avoid header-size attacks against
+    upstream proxies.
+
+    Tokens are produced by an auth flow (typically signing a JWT or
+    issuing a random opaque string) and consumed by route middleware
+    that validates them before dispatching the handler. The exact
+    encoding (JWT, paseto, opaque random) is target-resolved via
+    preferences.candy `when need jwt use ...` (or equivalent for
+    non-JWT runtimes).
+
+    Comparison is constant-time. Tokens never appear in logs, error
+    messages, audit trails, or telemetry — observability surfaces
+    record only the authenticated principal id, not the bearer that
+    yielded it.
+  """
+
+  max:     256
+  compare: constant-time
+  log:     forbidden
+
+  examples:
+    - "tokens are issued by Login / Signup flows on success"
+    - "tokens are consumed by `auth: bearer` controller middleware"
+    - "the raw token never appears in a log line, error response, or audit row"
+}
