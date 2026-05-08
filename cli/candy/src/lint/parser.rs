@@ -1268,10 +1268,9 @@ fn parse_state_field_line(line: &str, path: &Path, line_num: usize) -> Option<St
 
 fn parse_external_actor_body(body: &str, path: &Path, start_line: usize) -> BlockFields {
     let mut fields = BlockFields::default();
-    let mut line_num = start_line;
 
-    for line in body.lines() {
-        line_num += 1;
+    for (offset, line) in body.lines().enumerate() {
+        let line_num = start_line + offset + 1;
         let trimmed = line.trim();
         if trimmed.starts_with("intent:") {
             let rest = trimmed["intent:".len()..]
@@ -1424,11 +1423,10 @@ fn parse_policy_body(body: &str, _path: &Path, _start_line: usize) -> BlockField
 
 fn parse_event_body(body: &str, path: &Path, start_line: usize) -> BlockFields {
     let mut fields = BlockFields::default();
-    let mut line_num = start_line;
     let mut in_payload = false;
 
-    for line in body.lines() {
-        line_num += 1;
+    for (offset, line) in body.lines().enumerate() {
+        let line_num = start_line + offset + 1;
         let trimmed = line.trim();
 
         if trimmed.starts_with("payload:") {
