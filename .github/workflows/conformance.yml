@@ -1,0 +1,72 @@
+name: Conformance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  auth:
+    name: auth / ${{ matrix.lang }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [go, rust]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Go
+        if: matrix.lang == 'go'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: examples/auth/targets/go/go.mod
+          cache-dependency-path: examples/auth/targets/go/go.sum
+
+      - name: Install Rust toolchain
+        if: matrix.lang == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        if: matrix.lang == 'rust'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            examples/auth/targets/rust/target
+          key: ${{ runner.os }}-cargo-auth-${{ hashFiles('examples/auth/targets/rust/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-auth-
+
+      # Build ahead of the run so a slow cold build fails as a build error
+      # instead of a boot timeout.
+      - name: Build Go target
+        if: matrix.lang == 'go'
+        working-directory: examples/auth/targets/go
+        run: go build ./...
+
+      - name: Build Rust target
+        if: matrix.lang == 'rust'
+        working-directory: examples/auth/targets/rust
+        run: cargo build --release
+
+      - name: Install hurl
+        env:
+          HURL_VERSION: 8.0.1
+        run: |
+          curl -fsSL -o hurl.deb \
+            "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/hurl_${HURL_VERSION}_amd64.deb"
+          sudo apt-get install -y ./hurl.deb
+          hurl --version
+
+      - name: Run conformance
+        run: evals/run-conformance.sh auth ${{ matrix.lang }}
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-auth-${{ matrix.lang }}
+          path: reports/
