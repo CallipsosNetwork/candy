@@ -9,5 +9,4 @@ cd "$SCRIPT_DIR/.."
 export PORT="${PORT:-8080}"
 export DB_PATH="${DB_PATH:-/tmp/auth-dev.db}"
 export JWT_SECRET="${JWT_SECRET:-dev-secret-change-in-production}"
-GO_BIN="$(command -v go || true)"
-exec "${GO_BIN:-/usr/local/go/bin/go}" run ./cmd/server
+exec cargo run --release

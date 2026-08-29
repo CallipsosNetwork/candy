@@ -33,15 +33,23 @@ hurl --variables-file evals/auth/fixtures.env \
      --variable BASE_URL=http://localhost:8080 \
      evals/auth/auth.hurl
 
-# Against all four targets in sequence (once codegen lands):
-for target in go rust typescript python; do
-  start_backend $target
-  hurl --variables-file evals/auth/fixtures.env \
-       --variable BASE_URL=$(backend_url $target) \
-       evals/auth/auth.hurl
-  stop_backend $target
+# Or let the runner boot the target, wait for the port, run the suite,
+# and write the result to reports/<lang>.log:
+evals/run-conformance.sh auth go
+evals/run-conformance.sh auth rust 8081   # optional port argument
+
+# Against all available targets in sequence:
+for target in go rust; do
+  evals/run-conformance.sh auth $target
 done
 ```
+
+`evals/run-conformance.sh <feature> <lang> [port]` resolves
+`examples/<feature>/targets/<lang>/scripts/run.sh`, starts it with a
+fresh temporary `DB_PATH`, and exits with hurl's exit code. It refuses to
+start if the port is already in use, and always stops the server on exit.
+`reports/` is gitignored; CI runs the script for every target in
+`.github/workflows/conformance.yml` and uploads `reports/` as an artifact.
 
 Hurl 4.x or later. Backends are expected to be reachable at `BASE_URL`
 and to start with empty state — every test bootstraps the actors it
