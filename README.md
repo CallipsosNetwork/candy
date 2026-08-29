@@ -1,5 +1,7 @@
 # candy
 
+![auth.candy open in Neovim next to a Claude Code session](docs/images/auth-spec-with-claude-code.png)
+
 **candy** is a specification language for stateful backends. You describe a
 system as **actors with state**, **flows that compose actors**, **controllers
 that expose flows over HTTP**, **policies that capture rules**, and **events
@@ -64,6 +66,39 @@ controller Greetings {
 
 That is a complete spec. A generator turns it into an HTTP server in the
 target language with the route, handler, and response shape wired up.
+
+---
+
+## Editor tooling
+
+Three editor integrations live under `extensions/`:
+
+- **`extensions/neovim`** — a dedicated Neovim plugin (`candy.nvim`):
+  filetype detection, axis-keyed highlight groups, and tree-sitter queries.
+  Installs as a local plugin via lazy.nvim.
+- **`extensions/tree-sitter-candy`** — the tree-sitter grammar. Any editor
+  with tree-sitter support can use it: Neovim (via nvim-treesitter),
+  Helix, Zed, Emacs (tree-sitter modes), and VS Code through a
+  tree-sitter extension host.
+- **`extensions/vscode`** — a TextMate grammar for VS Code and other
+  TextMate-based editors (Cursor, Sublime Text, JetBrains IDEs).
+
+The grammar gives `.candy` files syntax highlighting and a live syntax tree.
+Every block — `prose`, `type`, `actor`, `state`, `accepts`, `invariant`,
+`policy`, `examples` — resolves to a named node with source ranges, so
+editor features (folding, text objects, structural navigation) and the
+linter share one parse.
+
+The billing spec, with its syntax tree alongside. The `prose` block on the
+left maps to `intent_field`, `exports_field`, `uses_field`, and
+`policies_field` on the right:
+
+![billing.candy with its tree-sitter syntax tree](docs/images/billing-spec-syntax-tree.png)
+
+An `accepts` message on the `Session` actor — `require` predicates with
+`rescue` clauses and a struct-literal `commit` all appear as typed nodes:
+
+![auth.candy with its tree-sitter syntax tree](docs/images/auth-spec-syntax-tree.png)
 
 ---
 
