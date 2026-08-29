@@ -1337,10 +1337,9 @@ fn parse_external_call_line(line: &str, path: &Path, line_num: usize) -> Option<
     // match `ask ActorName.Op(` or `ask ActorName[Tag].Op(`
     let after_ask = if let Some(r) = line.strip_prefix("ask ") {
         r.trim()
-    } else if let Some(r) = line.find("ask ").map(|i| &line[i + 4..]) {
-        r.trim()
     } else {
-        return None;
+        let r = line.find("ask ").map(|i| &line[i + 4..])?;
+        r.trim()
     };
     // strip provider tag: ActorName[Tag].Op or ActorName.Op
     let actor_and_op = after_ask.split('(').next()?;
